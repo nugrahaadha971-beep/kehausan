@@ -1,6 +1,6 @@
 import { QuestsState, WaterLog } from './types';
 import { getLocalDateKey } from './storage';
-import { getLogsForDate, getTotalMlForDate } from './hydration';
+import { getLogEffectiveMl, getLogsForDate, getTotalMlForDate } from './hydration';
 
 export interface QuestDefinition {
   id: string;
@@ -8,6 +8,7 @@ export interface QuestDefinition {
   target: number;
   unit: string;
   rewardXp: number;
+  rewardDrops: number;
   rewardFreeze?: number;
 }
 
@@ -18,6 +19,7 @@ export const DAILY_QUEST_DEFS: QuestDefinition[] = [
     target: 3,
     unit: 'kali',
     rewardXp: 20,
+    rewardDrops: 15,
   },
   {
     id: 'goal_100',
@@ -25,6 +27,7 @@ export const DAILY_QUEST_DEFS: QuestDefinition[] = [
     target: 1,
     unit: 'target',
     rewardXp: 30,
+    rewardDrops: 25,
   },
   {
     id: 'afternoon_500',
@@ -32,6 +35,7 @@ export const DAILY_QUEST_DEFS: QuestDefinition[] = [
     target: 500,
     unit: 'ml',
     rewardXp: 25,
+    rewardDrops: 20,
     rewardFreeze: 1,
   },
 ];
@@ -56,7 +60,7 @@ export function computeQuestsForToday(
       const hour = new Date(l.ts).getHours();
       return hour >= 14;
     })
-    .reduce((sum, l) => sum + l.ml, 0);
+    .reduce((sum, l) => sum + getLogEffectiveMl(l), 0);
 
   const progressMap: Record<string, number> = {
     morning_3: Math.min(3, morningCount),

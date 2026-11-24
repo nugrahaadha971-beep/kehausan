@@ -37,7 +37,7 @@ export const SpeechBubble: React.FC<SpeechBubbleProps> = ({
       aria-live="polite"
       className={`relative rounded-[20px] border-2 border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 px-3.5 py-2.5 text-sm font-bold leading-snug text-[#3C3C3C] dark:text-slate-100 shadow-sm ${className}`}
     >
-      <p className="line-clamp-2 min-h-[1.25rem]">{displayed}</p>
+      <p className="min-h-[1.25rem] break-words">{displayed}</p>
 
       {tailSide === 'left' && (
         <span

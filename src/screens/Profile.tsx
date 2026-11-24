@@ -1,14 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
+  AlertTriangle,
   Bell,
+  CheckCircle2,
+  Coins,
   Download,
   Lock,
   Moon,
   RotateCcw,
   Shield,
+  ShoppingBag,
   Sparkles,
   Sun,
+  Upload,
   Volume2,
   VolumeX,
   Vibrate,
@@ -27,17 +32,31 @@ import { Button3D } from '../components/Button3D';
 import { ProgressBar } from '../components/ProgressBar';
 import { PWAInstallButton } from '../components/PWAInstallButton';
 import { useTetes } from '../state/TetesContext';
+import { TetesData, ThemeMode } from '../lib/types';
 import {
   CUP_PRESETS,
-  DROPI_ACCESSORY_UNLOCK_LEVELS,
-  DROPI_COLOR_UNLOCK_LEVELS,
+  DROPI_ACCESSORY_PRICES,
+  DROPI_COLOR_PRICES,
   getXpProgressInLevel,
+  MAX_STREAK_FREEZES,
+  STREAK_FREEZE_PRICE,
 } from '../lib/hydration';
-import { exportStateAsJson } from '../lib/storage';
+import { exportStateAsJson, validateBackupPayload } from '../lib/storage';
 import { soundEngine } from '../lib/sound';
 
 export const Profile: React.FC = () => {
-  const { data, updateProfile, updateSettings, resetAllData } = useTetes();
+  const {
+    data,
+    isDarkMode,
+    isWindDown,
+    updateProfile,
+    updateSettings,
+    buyDropiColor,
+    buyDropiAccessory,
+    buyStreakFreeze,
+    restoreFromBackup,
+    resetAllData,
+  } = useTetes();
   const reduceMotion = useReducedMotion();
   const levelInfo = getXpProgressInLevel(data.progress.xp);
   const currentColor = normalizeDropiColor(data.profile.dropiColor);
@@ -47,8 +66,65 @@ export const Profile: React.FC = () => {
   const [resetStep, setResetStep] = useState<0 | 1 | 2>(0);
   const [notifFeedback, setNotifFeedback] = useState<string | null>(null);
   const [isNotifBusy, setIsNotifBusy] = useState(false);
+  const [shopFeedback, setShopFeedback] = useState<{
+    text: string;
+    tone: 'success' | 'error';
+  } | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [pendingBackup, setPendingBackup] = useState<TetesData | null>(null);
+  const [backupFeedback, setBackupFeedback] = useState<{
+    text: string;
+    tone: 'success' | 'error';
+  } | null>(null);
+
+  const handleSelectBackupFile = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setBackupFeedback(null);
+    setPendingBackup(null);
+
+    try {
+      const text = await file.text();
+      const parsed: unknown = JSON.parse(text);
+      const validation = validateBackupPayload(parsed);
+      if (!validation.valid) {
+        setBackupFeedback({
+          text: validation.error,
+          tone: 'error',
+        });
+        return;
+      }
+      setPendingBackup(validation.data);
+    } catch {
+      setBackupFeedback({
+        text: 'File gagal dibaca. Pastikan file berformat JSON yang valid dari Tetes.',
+        tone: 'error',
+      });
+    }
+  };
+
+  const handleConfirmRestore = () => {
+    if (!pendingBackup) return;
+    restoreFromBackup(pendingBackup);
+    setPendingBackup(null);
+    setBackupFeedback({
+      text: 'Data berhasil dipulihkan dari file cadangan!',
+      tone: 'success',
+    });
+  };
+
+  const isOneSignalOrigin =
+    typeof window !== 'undefined' &&
+    window.location.origin === 'https://nugrahaadha971-beep.github.io';
 
   useEffect(() => {
+    if (!isOneSignalOrigin) return;
+
     let active = true;
     let removeListener: (() => void) | undefined;
 
@@ -56,30 +132,34 @@ export const Profile: React.FC = () => {
     window.OneSignalDeferred.push((OneSignal) => {
       if (!active) return;
 
-      const subscription = OneSignal.User?.PushSubscription;
-      if (subscription && typeof subscription.optedIn === 'boolean') {
-        updateSettings({ notifications: subscription.optedIn });
+      try {
+        const subscription = OneSignal.User?.PushSubscription;
+        if (subscription && typeof subscription.optedIn === 'boolean') {
+          updateSettings({ notifications: subscription.optedIn });
+        }
+
+        const handleSubscriptionChange = (event: { current?: { optedIn?: boolean } }) => {
+          if (!active) return;
+          const nextOptedIn = Boolean(
+            event?.current?.optedIn ?? OneSignal.User?.PushSubscription?.optedIn
+          );
+          updateSettings({ notifications: nextOptedIn });
+        };
+
+        subscription?.addEventListener?.('change', handleSubscriptionChange);
+        removeListener = () => {
+          subscription?.removeEventListener?.('change', handleSubscriptionChange);
+        };
+      } catch {
+        // Abaikan jika OneSignal belum terinisialisasi
       }
-
-      const handleSubscriptionChange = (event: { current?: { optedIn?: boolean } }) => {
-        if (!active) return;
-        const nextOptedIn = Boolean(
-          event?.current?.optedIn ?? OneSignal.User?.PushSubscription?.optedIn
-        );
-        updateSettings({ notifications: nextOptedIn });
-      };
-
-      subscription?.addEventListener?.('change', handleSubscriptionChange);
-      removeListener = () => {
-        subscription?.removeEventListener?.('change', handleSubscriptionChange);
-      };
     });
 
     return () => {
       active = false;
       removeListener?.();
     };
-  }, [updateSettings]);
+  }, [isOneSignalOrigin, updateSettings]);
 
   const handleToggleNotifications = async () => {
     if (isNotifBusy) return;
@@ -87,14 +167,16 @@ export const Profile: React.FC = () => {
     if (data.settings.notifications) {
       updateSettings({ notifications: false });
       setNotifFeedback(null);
-      window.OneSignalDeferred = window.OneSignalDeferred || [];
-      window.OneSignalDeferred.push(async (OneSignal) => {
-        try {
-          await OneSignal.User?.PushSubscription?.optOut?.();
-        } catch {
-          // Abaikan jika SDK gagal optOut
-        }
-      });
+      if (isOneSignalOrigin) {
+        window.OneSignalDeferred = window.OneSignalDeferred || [];
+        window.OneSignalDeferred.push(async (OneSignal) => {
+          try {
+            await OneSignal.User?.PushSubscription?.optOut?.();
+          } catch {
+            // Abaikan jika SDK gagal optOut
+          }
+        });
+      }
       return;
     }
 
@@ -107,6 +189,26 @@ export const Profile: React.FC = () => {
       setNotifFeedback(
         'Izin notifikasi diblokir di pengaturan browser. Aktifkan izin di ikon gembok/alamat URL.'
       );
+      return;
+    }
+
+    if (!isOneSignalOrigin) {
+      try {
+        const perm =
+          Notification.permission === 'granted'
+            ? 'granted'
+            : await Notification.requestPermission();
+        if (perm === 'granted') {
+          updateSettings({ notifications: true });
+          setNotifFeedback(
+            'Notifikasi browser aktif di pratinjau! Push Notification otomatis aktif di situs utama.'
+          );
+        } else {
+          setNotifFeedback('Izin notifikasi belum diberikan.');
+        }
+      } catch {
+        setNotifFeedback('Gagal meminta izin notifikasi.');
+      }
       return;
     }
 
@@ -190,7 +292,11 @@ export const Profile: React.FC = () => {
             <span>{data.progress.xp} XP</span>
             <span>·</span>
             <span className="inline-flex items-center gap-1 text-[#1CB0F6]">
-              <Shield className="w-3.5 h-3.5" /> {data.progress.freezes} Pelindung
+              <Shield className="w-3.5 h-3.5" /> {data.streakFreezes} Pelindung
+            </span>
+            <span>·</span>
+            <span className="inline-flex items-center gap-1 text-[#0B8770] dark:text-[#5EEAD4]">
+              <Coins className="w-3.5 h-3.5 text-[#14B8A6]" /> {data.drops} Koin
             </span>
           </div>
         </div>
@@ -210,96 +316,211 @@ export const Profile: React.FC = () => {
           />
         </div>
 
-        {/* Pilihan Warna Dropi */}
-        <div className="mt-5 text-left">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-extrabold text-[#3C3C3C] dark:text-slate-200">
-              Warna Maskot Dropi
-            </span>
-            <span className="text-[11px] font-bold text-[#777777] dark:text-slate-400">
-              Terbuka sesuai level
+        {/* Toko & Lemari Dropi */}
+        <div className="mt-6 pt-4 border-t border-[#F0F0F0] dark:border-slate-700 text-left">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-1.5">
+              <ShoppingBag className="w-4 h-4 text-[#1CB0F6]" />
+              <h2 className="font-display text-base font-extrabold text-[#3C3C3C] dark:text-white">
+                Toko & Lemari Dropi
+              </h2>
+            </div>
+            <span className="inline-flex items-center gap-1 rounded-full bg-[#E6FFFA] dark:bg-teal-950/60 border border-[#8CE8D8] dark:border-teal-700/60 px-2.5 py-0.5 text-xs font-extrabold text-[#0B8770] dark:text-[#5EEAD4] tabular-nums">
+              <Coins className="w-3.5 h-3.5 text-[#14B8A6]" />
+              {data.drops} Koin
             </span>
           </div>
-          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5">
-            {(Object.entries(DROPI_COLORS) as [DropiColor, DropiTheme][]).map(
-              ([colorId, theme]) => {
-                const unlockLevel = DROPI_COLOR_UNLOCK_LEVELS[colorId];
-                const unlocked = levelInfo.level >= unlockLevel;
-                const selected = currentColor === colorId;
+
+          {shopFeedback && (
+            <div
+              role="status"
+              className={`mb-3 rounded-[12px] px-3 py-2 text-xs font-extrabold ${
+                shopFeedback.tone === 'success'
+                  ? 'bg-[#E8FDD8] dark:bg-emerald-950/50 text-[#2E7D00] dark:text-[#86EFAC]'
+                  : 'bg-[#FFF3DF] dark:bg-amber-950/50 text-[#B85D00] dark:text-[#FCD34D]'
+              }`}
+            >
+              {shopFeedback.text}
+            </div>
+          )}
+
+          {/* Pilihan Warna Dropi */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-extrabold text-[#3C3C3C] dark:text-slate-200">
+                Warna Maskot Dropi
+              </span>
+              <span className="text-[11px] font-bold text-[#777777] dark:text-slate-400">
+                Ketuk untuk beli / pakai
+              </span>
+            </div>
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5">
+              {(Object.entries(DROPI_COLORS) as [DropiColor, DropiTheme][]).map(
+                ([colorId, theme]) => {
+                  const unlocked = data.unlockedColors.includes(colorId);
+                  const selected = currentColor === colorId;
+                  const price = DROPI_COLOR_PRICES[colorId] ?? 0;
+                  return (
+                    <button
+                      key={colorId}
+                      type="button"
+                      title={
+                        unlocked
+                          ? theme.label
+                          : `Beli ${theme.label} seharga ${price} Koin Tetes`
+                      }
+                      aria-label={
+                        unlocked
+                          ? `Pakai warna ${theme.label}`
+                          : `Beli warna ${theme.label} seharga ${price} koin`
+                      }
+                      onClick={() => {
+                        const res = buyDropiColor(colorId);
+                        if (!res.ok && res.reason === 'insufficient_drops') {
+                          setShopFeedback({
+                            text: `Koin Tetes belum cukup untuk ${theme.label} (butuh ${price} koin).`,
+                            tone: 'error',
+                          });
+                        } else if (res.ok && res.reason !== 'already_unlocked') {
+                          setShopFeedback({
+                            text: `Warna ${theme.label} berhasil dibeli & langsung dipakai!`,
+                            tone: 'success',
+                          });
+                        } else {
+                          setShopFeedback(null);
+                        }
+                      }}
+                      style={{ backgroundColor: theme.base }}
+                      className={`relative min-h-[48px] rounded-[14px] flex items-center justify-center transition-transform cursor-pointer active:scale-95 ${
+                        selected
+                          ? 'ring-4 ring-[#1CB0F6]/50 scale-105 border-2 border-white'
+                          : unlocked
+                            ? 'border-2 border-black/10'
+                            : 'border-2 border-black/15 opacity-80'
+                      }`}
+                    >
+                      {!unlocked && (
+                        <span className="flex flex-col items-center rounded-lg bg-black/45 px-1.5 py-0.5 text-[10px] font-extrabold text-white">
+                          <Lock className="w-3 h-3" />
+                          <span className="tabular-nums">{price}</span>
+                        </span>
+                      )}
+                      {unlocked && selected && (
+                        <Sparkles className="w-4 h-4 text-white drop-shadow" />
+                      )}
+                    </button>
+                  );
+                }
+              )}
+            </div>
+          </div>
+
+          {/* Pilihan Aksesori Dropi */}
+          <div className="mt-5">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-extrabold text-[#3C3C3C] dark:text-slate-200">
+                Aksesori Dropi
+              </span>
+              <span className="text-[11px] font-bold text-[#777777] dark:text-slate-400">
+                Topi · Kacamata · Mahkota
+              </span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {DROPI_ACCESSORIES.map((acc) => {
+                const unlocked = data.unlockedAccessories.includes(acc.id);
+                const selected = currentAccessory === acc.id;
+                const price = DROPI_ACCESSORY_PRICES[acc.id] ?? 0;
                 return (
                   <button
-                    key={colorId}
+                    key={acc.id}
                     type="button"
-                    disabled={!unlocked}
-                    title={
+                    aria-label={
                       unlocked
-                        ? theme.label
-                        : `${theme.label} (Terbuka di Level ${unlockLevel})`
+                        ? `Pakai aksesori ${acc.label}`
+                        : `Beli aksesori ${acc.label} seharga ${price} koin`
                     }
-                    aria-label={`Pilih warna ${theme.label}`}
                     onClick={() => {
-                      soundEngine.play('pop', data.settings.sound);
-                      updateProfile({ dropiColor: colorId });
+                      const res = buyDropiAccessory(acc.id);
+                      if (!res.ok && res.reason === 'insufficient_drops') {
+                        setShopFeedback({
+                          text: `Koin Tetes belum cukup untuk ${acc.label} (butuh ${price} koin).`,
+                          tone: 'error',
+                        });
+                      } else if (res.ok && res.reason !== 'already_unlocked') {
+                        setShopFeedback({
+                          text: `Aksesori ${acc.label} berhasil dibeli & langsung dipakai!`,
+                          tone: 'success',
+                        });
+                      } else {
+                        setShopFeedback(null);
+                      }
                     }}
-                    style={{ backgroundColor: theme.base }}
-                    className={`relative min-h-[44px] rounded-[14px] flex items-center justify-center transition-transform cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed ${
+                    className={`min-h-[46px] rounded-[14px] border-2 px-2.5 py-2 text-xs font-extrabold flex items-center justify-center gap-1.5 transition-colors cursor-pointer active:scale-95 ${
                       selected
-                        ? 'ring-4 ring-[#1CB0F6]/50 scale-105 border-2 border-white'
-                        : 'border-2 border-black/10'
+                        ? 'border-[#1CB0F6] bg-[#DDF4FF] dark:bg-[#0C2D48] text-[#1899D6] dark:text-[#7CE0FF]'
+                        : unlocked
+                          ? 'border-[#E5E5E5] dark:border-slate-700 text-[#3C3C3C] dark:text-slate-200'
+                          : 'border-dashed border-[#CBD5E1] dark:border-slate-600 bg-slate-50 dark:bg-slate-900/60 text-[#64748B] dark:text-slate-300'
                     }`}
                   >
+                    {!unlocked && <Lock className="w-3.5 h-3.5 shrink-0" />}
+                    <span>{acc.label}</span>
                     {!unlocked && (
-                      <span className="flex flex-col items-center text-[10px] font-extrabold text-white drop-shadow">
-                        <Lock className="w-3.5 h-3.5" />
-                        Lv.{unlockLevel}
+                      <span className="text-[10px] font-extrabold text-[#0B8770] dark:text-[#5EEAD4] tabular-nums">
+                        {price}
                       </span>
-                    )}
-                    {unlocked && selected && (
-                      <Sparkles className="w-4 h-4 text-white drop-shadow" />
                     )}
                   </button>
                 );
-              }
-            )}
+              })}
+            </div>
           </div>
-        </div>
 
-        {/* Pilihan Aksesori Dropi */}
-        <div className="mt-5 text-left">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-extrabold text-[#3C3C3C] dark:text-slate-200">
-              Aksesori Dropi
-            </span>
-            <span className="text-[11px] font-bold text-[#777777] dark:text-slate-400">
-              Topi · Kacamata · Mahkota
-            </span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {DROPI_ACCESSORIES.map((acc) => {
-              const unlockLevel = DROPI_ACCESSORY_UNLOCK_LEVELS[acc.id];
-              const unlocked = levelInfo.level >= unlockLevel;
-              const selected = currentAccessory === acc.id;
-              return (
-                <button
-                  key={acc.id}
-                  type="button"
-                  disabled={!unlocked}
-                  onClick={() => {
-                    soundEngine.play('pop', data.settings.sound);
-                    updateProfile({ dropiAccessory: acc.id });
-                  }}
-                  className={`min-h-[44px] rounded-[14px] border-2 px-2.5 py-2 text-xs font-extrabold flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
-                    selected
-                      ? 'border-[#1CB0F6] bg-[#DDF4FF] dark:bg-[#0C2D48] text-[#1899D6] dark:text-[#7CE0FF]'
-                      : 'border-[#E5E5E5] dark:border-slate-700 text-[#3C3C3C] dark:text-slate-200'
-                  }`}
-                >
-                  {!unlocked && <Lock className="w-3.5 h-3.5 shrink-0" />}
-                  <span>{acc.label}</span>
-                  {!unlocked && <span className="text-[10px] opacity-80">Lv.{unlockLevel}</span>}
-                </button>
-              );
-            })}
+          {/* Kartu Pembelian Pelindung Streak (Streak Freeze) */}
+          <div className="mt-5 rounded-[16px] border-2 border-[#BCE8FF] dark:border-sky-800/70 bg-[#F2FAFF] dark:bg-sky-950/35 p-3.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5 min-w-0">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[#DDF4FF] dark:bg-[#0C2D48] text-[#1CB0F6]">
+                  <Shield className="w-5 h-5 fill-[#1CB0F6]/20" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-extrabold text-[#3C3C3C] dark:text-white">
+                    Pelindung Streak (Streak Freeze)
+                  </div>
+                  <p className="text-[11px] font-semibold text-[#666666] dark:text-slate-300 leading-snug mt-0.5">
+                    Otomatis selamatkan streak jika terlewat 1 hari ({data.streakFreezes}/{MAX_STREAK_FREEZES} tersimpan).
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={data.streakFreezes >= MAX_STREAK_FREEZES}
+                onClick={() => {
+                  const res = buyStreakFreeze();
+                  if (!res.ok && res.reason === 'insufficient_drops') {
+                    setShopFeedback({
+                      text: `Koin Tetes belum cukup untuk Pelindung Streak (butuh ${STREAK_FREEZE_PRICE} koin).`,
+                      tone: 'error',
+                    });
+                  } else if (res.ok) {
+                    setShopFeedback({
+                      text: '1 Pelindung Streak berhasil ditambahkan ke cadanganmu!',
+                      tone: 'success',
+                    });
+                  }
+                }}
+                className="shrink-0 min-h-[40px] inline-flex items-center gap-1 rounded-[12px] bg-[#1CB0F6] border-b-3 border-[#1899D6] px-3 py-1.5 text-xs font-extrabold text-white active:translate-y-[1px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                {data.streakFreezes >= MAX_STREAK_FREEZES ? (
+                  <span>Maks. {MAX_STREAK_FREEZES}</span>
+                ) : (
+                  <>
+                    <Coins className="w-3.5 h-3.5" />
+                    <span>Beli · {STREAK_FREEZE_PRICE}</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -401,6 +622,9 @@ export const Profile: React.FC = () => {
             />
           </label>
         </div>
+        <p className="text-[11px] font-semibold text-[#777777] dark:text-slate-400 leading-relaxed">
+          Fase Wind-Down aktif 2 jam sebelum jam tidur ({isWindDown ? 'sedang aktif sekarang' : 'pengingat minum malam ringan'}).
+        </p>
       </section>
 
       {/* Pengingat & Preferensi */}
@@ -541,54 +765,173 @@ export const Profile: React.FC = () => {
             </button>
           </div>
 
-          <div className="flex items-center justify-between pt-3">
-            <div className="flex items-center gap-2.5">
-              {data.settings.dark ? (
-                <Moon className="w-5 h-5 text-[#FFC800]" />
-              ) : (
-                <Sun className="w-5 h-5 text-[#FF9600]" />
-              )}
-              <span className="text-sm font-extrabold text-[#3C3C3C] dark:text-white">
-                Mode Gelap
-              </span>
+          <div className="pt-3 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                {isDarkMode ? (
+                  <Moon className="w-5 h-5 text-[#FFC800]" />
+                ) : (
+                  <Sun className="w-5 h-5 text-[#FF9600]" />
+                )}
+                <div>
+                  <span className="block text-sm font-extrabold text-[#3C3C3C] dark:text-white">
+                    Tema Tampilan
+                  </span>
+                  <span className="block text-[11px] font-bold text-[#777777] dark:text-slate-400">
+                    {data.settings.themeMode === 'auto'
+                      ? `Otomatis (${isDarkMode ? 'Mode Malam aktif' : 'Mode Terang aktif'})`
+                      : data.settings.themeMode === 'dark'
+                        ? 'Selalu Gelap'
+                        : 'Selalu Terang'}
+                  </span>
+                </div>
+              </div>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={data.settings.dark}
-              aria-label="Aktifkan mode gelap"
-              onClick={() => updateSettings({ dark: !data.settings.dark })}
-              className={`min-h-[32px] w-14 rounded-full p-1 transition-colors cursor-pointer ${
-                data.settings.dark
-                  ? 'bg-[#58CC02]'
-                  : 'bg-[#E5E5E5] dark:bg-slate-700'
-              }`}
+
+            <div
+              role="radiogroup"
+              aria-label="Pilih mode tema tampilan"
+              className="grid grid-cols-3 gap-1.5 sm:gap-2"
             >
-              <span
-                className={`block h-6 w-6 rounded-full bg-white shadow transition-transform ${
-                  data.settings.dark ? 'translate-x-6' : 'translate-x-0'
-                }`}
-              />
-            </button>
+              {(
+                [
+                  { id: 'auto', label: 'Otomatis' },
+                  { id: 'light', label: 'Terang' },
+                  { id: 'dark', label: 'Gelap' },
+                ] as { id: ThemeMode; label: string }[]
+              ).map((opt) => {
+                const active = data.settings.themeMode === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => {
+                      soundEngine.play('click', data.settings.sound);
+                      updateSettings({
+                        themeMode: opt.id,
+                        dark: opt.id === 'dark',
+                      });
+                    }}
+                    className={`min-h-[40px] rounded-[12px] border-2 px-2 text-xs font-extrabold cursor-pointer transition-colors ${
+                      active
+                        ? 'border-[#1CB0F6] bg-[#DDF4FF] dark:bg-[#0C2D48] text-[#1899D6] dark:text-[#7CE0FF]'
+                        : 'border-[#E5E5E5] dark:border-slate-700 text-[#3C3C3C] dark:text-slate-200'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] font-semibold text-[#777777] dark:text-slate-400 leading-relaxed">
+              Mode Otomatis beralih ke tampilan malam mulai pukul 18.00 (atau 2 jam sebelum tidur) hingga jam bangun.
+            </p>
           </div>
         </div>
       </section>
 
-      {/* Kelola Data (Ekspor & Reset 2 langkah) */}
+      {/* Cadangan & Pemulihan Data (Ekspor/Impor JSON & Reset 2 langkah) */}
       <section className="rounded-[20px] border-2 border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 p-4 space-y-3">
-        <h2 className="font-display text-lg font-extrabold text-[#3C3C3C] dark:text-white">
-          Data Lokal
-        </h2>
+        <div>
+          <h2 className="font-display text-lg font-extrabold text-[#3C3C3C] dark:text-white">
+            Cadangan & Pemulihan Data
+          </h2>
+          <p className="mt-0.5 text-xs font-semibold text-[#777777] dark:text-slate-400">
+            Simpan seluruh progres ke file JSON atau pulihkan dari cadangan sebelumnya.
+          </p>
+        </div>
 
-        <Button3D
-          variant="white"
-          fullWidth
-          size="md"
-          onClick={() => exportStateAsJson(data)}
-        >
-          <Download className="w-4 h-4" />
-          Ekspor Data (JSON)
-        </Button3D>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          aria-label="Pilih file cadangan JSON"
+          onChange={handleSelectBackupFile}
+          className="hidden"
+        />
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <Button3D
+            variant="white"
+            fullWidth
+            size="md"
+            onClick={() => {
+              exportStateAsJson(data);
+              setBackupFeedback({
+                text: 'File cadangan berhasil diunduh.',
+                tone: 'success',
+              });
+            }}
+          >
+            <Download className="w-4 h-4" />
+            Unduh Cadangan (.json)
+          </Button3D>
+
+          <Button3D
+            variant="water"
+            fullWidth
+            size="md"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Upload className="w-4 h-4" />
+            Pulihkan dari File (.json)
+          </Button3D>
+        </div>
+
+        {backupFeedback && (
+          <div
+            role="status"
+            className={`flex items-start gap-2 rounded-[14px] border px-3 py-2.5 text-xs font-extrabold ${
+              backupFeedback.tone === 'success'
+                ? 'border-[#8FE34D] bg-[#F2FDE9] dark:bg-emerald-950/40 text-[#3E9900] dark:text-emerald-300'
+                : 'border-[#FF9B9B] bg-red-50 dark:bg-red-950/40 text-[#C92A2A] dark:text-red-300'
+            }`}
+          >
+            {backupFeedback.tone === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            )}
+            <span>{backupFeedback.text}</span>
+          </div>
+        )}
+
+        {pendingBackup && (
+          <div
+            role="dialog"
+            aria-label="Konfirmasi pemulihan data"
+            className="rounded-[16px] border-2 border-[#1CB0F6] bg-[#F2FAFF] dark:bg-sky-950/40 p-3.5 space-y-2.5"
+          >
+            <div className="text-xs font-extrabold text-[#0B6A99] dark:text-[#7CE0FF]">
+              Konfirmasi Pemulihan Data
+            </div>
+            <p className="text-xs font-bold text-[#3C3C3C] dark:text-slate-200 leading-relaxed">
+              Pulihkan data atas nama{' '}
+              <strong>{pendingBackup.profile.name || 'Teman'}</strong> (
+              {pendingBackup.logs.length} catatan minum, streak{' '}
+              {pendingBackup.progress.streak} hari, {pendingBackup.progress.xp} XP,{' '}
+              {pendingBackup.drops} Koin Tetes)? Data saat ini akan digantikan.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button3D
+                variant="white"
+                size="sm"
+                onClick={() => setPendingBackup(null)}
+              >
+                Batal
+              </Button3D>
+              <Button3D
+                variant="water"
+                size="sm"
+                onClick={handleConfirmRestore}
+              >
+                Ya, Pulihkan
+              </Button3D>
+            </div>
+          </div>
+        )}
 
         {resetStep === 0 && (
           <Button3D

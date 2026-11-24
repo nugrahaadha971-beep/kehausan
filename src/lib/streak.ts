@@ -19,44 +19,80 @@ export function getPreviousStreakMilestone(streak: number): number {
   return prev;
 }
 
-export function reconcileStreak(
+export function getProgressFreezes(progress: ProgressState): number {
+  if (
+    typeof progress.streakFreezes === 'number' &&
+    Number.isFinite(progress.streakFreezes)
+  ) {
+    return Math.max(0, progress.streakFreezes);
+  }
+  return Math.max(0, progress.freezes || 0);
+}
+
+export function reconcileStreakWithInfo(
   progress: ProgressState,
   todayKey: string = getLocalDateKey()
-): ProgressState {
+): {
+  nextProgress: ProgressState;
+  usedFreeze: boolean;
+  savedStreak: number;
+} {
+  const currentFreezes = getProgressFreezes(progress);
+
   if (!progress.lastGoalDate || progress.streak === 0) {
-    return progress;
+    return { nextProgress: progress, usedFreeze: false, savedStreak: 0 };
   }
 
   if (progress.lastGoalDate === todayKey) {
-    return progress;
+    return { nextProgress: progress, usedFreeze: false, savedStreak: 0 };
   }
 
   const yesterdayKey = addDaysToDateKey(todayKey, -1);
   if (progress.lastGoalDate === yesterdayKey) {
     // Masih aman, hari ini belum selesai saja
-    return progress;
+    return { nextProgress: progress, usedFreeze: false, savedStreak: 0 };
   }
 
   const twoDaysAgoKey = addDaysToDateKey(todayKey, -2);
-  // Terlewat tepat 1 hari (kemarin) -> cek Pelindung Streak
+  // Terlewat tepat 1 hari (kemarin) -> cek Pelindung Streak (streakFreezes / freezes)
   if (
     progress.lastGoalDate === twoDaysAgoKey &&
-    progress.freezes > 0 &&
+    currentFreezes > 0 &&
     progress.lastFreezeUsedDate !== yesterdayKey
   ) {
-    return {
+    const nextFreezes = currentFreezes - 1;
+    const nextProgress: ProgressState = {
       ...progress,
-      freezes: progress.freezes - 1,
+      freezes: nextFreezes,
+      ...(typeof progress.streakFreezes === 'number'
+        ? { streakFreezes: nextFreezes }
+        : {}),
       lastGoalDate: yesterdayKey, // dianggap terlindungi hingga kemarin
       lastFreezeUsedDate: yesterdayKey,
+    };
+    return {
+      nextProgress,
+      usedFreeze: true,
+      savedStreak: progress.streak,
     };
   }
 
   // Terlewat lebih dari 1 hari atau tidak ada Pelindung Streak
   return {
-    ...progress,
-    streak: 0,
+    nextProgress: {
+      ...progress,
+      streak: 0,
+    },
+    usedFreeze: false,
+    savedStreak: 0,
   };
+}
+
+export function reconcileStreak(
+  progress: ProgressState,
+  todayKey: string = getLocalDateKey()
+): ProgressState {
+  return reconcileStreakWithInfo(progress, todayKey).nextProgress;
 }
 
 export function applyLogToProgress(

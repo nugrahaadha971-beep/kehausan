@@ -29,6 +29,8 @@ export interface OneSignalInstance {
   };
   User: {
     PushSubscription: OneSignalPushSubscription;
+    addTag?: (key: string, value: string) => void | Promise<void>;
+    addTags?: (tags: Record<string, string>) => void | Promise<void>;
   };
 }
 

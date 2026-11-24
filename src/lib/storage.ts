@@ -1,4 +1,4 @@
-import { DropiColorId, TetesData } from './types';
+import { DropiAccessoryId, DropiColorId, TetesData, ThemeMode } from './types';
 import {
   normalizeDropiAccessory,
   normalizeDropiColor,
@@ -58,8 +58,8 @@ export function createDefaultState(): TetesData {
       name: '',
       weightKg: 60,
       activity: 'sedang',
-      wakeTime: '06:30',
-      sleepTime: '22:30',
+      wakeTime: '05:00',
+      sleepTime: '22:00',
       cupMl: 250,
       goalMl: 2400,
       reason: 'energi',
@@ -74,7 +74,9 @@ export function createDefaultState(): TetesData {
       streak: 0,
       longestStreak: 0,
       freezes: 1, // Hadiah awal 1 Pelindung Streak
+      streakFreezes: 1,
       lastGoalDate: null,
+      lastGoalDropsDate: null,
       lastFreezeUsedDate: null,
       prevStreakBeforeToday: 0,
       prevGoalDateBeforeToday: null,
@@ -92,9 +94,19 @@ export function createDefaultState(): TetesData {
       sound: true,
       haptics: true,
       dark: false,
+      themeMode: 'auto',
       reminderMinutes: 90,
       notifications: false,
     },
+    dailyBoosters: {
+      exercise: false,
+      hotWeather: false,
+    },
+    dailyBoostersDate: today,
+    drops: 50,
+    unlockedColors: ['blue', 'teal'],
+    unlockedAccessories: ['none'],
+    streakFreezes: 1,
   };
 }
 
@@ -103,19 +115,57 @@ export function migrateState(raw: unknown): TetesData {
   if (!raw || typeof raw !== 'object') return base;
 
   const obj = raw as Partial<TetesData>;
+  const today = getLocalDateKey();
+  const isSameBoosterDay =
+    typeof obj.dailyBoostersDate === 'string' && obj.dailyBoostersDate === today;
+
+  const migratedColor = (() => {
+    const rawColor = obj.profile?.dropiColor;
+    if (typeof rawColor === 'string' && rawColor in LEGACY_COLOR_MAP) {
+      return LEGACY_COLOR_MAP[rawColor];
+    }
+    return normalizeDropiColor(rawColor);
+  })();
+
+  const migratedAccessory = normalizeDropiAccessory(obj.profile?.dropiAccessory);
+
+  const rawFreezes =
+    typeof obj.streakFreezes === 'number' && Number.isFinite(obj.streakFreezes)
+      ? obj.streakFreezes
+      : typeof obj.progress?.streakFreezes === 'number' &&
+          Number.isFinite(obj.progress.streakFreezes)
+        ? obj.progress.streakFreezes
+        : typeof obj.progress?.freezes === 'number' &&
+            Number.isFinite(obj.progress.freezes)
+          ? obj.progress.freezes
+          : base.streakFreezes;
+  const clampedFreezes = Math.max(0, Math.min(3, Math.floor(rawFreezes)));
+
+  const unlockedColorsSet = new Set<DropiColorId>(['blue', 'teal', migratedColor]);
+  if (Array.isArray(obj.unlockedColors)) {
+    for (const c of obj.unlockedColors) {
+      const normalized =
+        typeof c === 'string' && c in LEGACY_COLOR_MAP
+          ? LEGACY_COLOR_MAP[c]
+          : normalizeDropiColor(c);
+      unlockedColorsSet.add(normalized);
+    }
+  }
+
+  const unlockedAccessoriesSet = new Set<DropiAccessoryId>(['none', migratedAccessory]);
+  if (Array.isArray(obj.unlockedAccessories)) {
+    for (const a of obj.unlockedAccessories) {
+      unlockedAccessoriesSet.add(normalizeDropiAccessory(a));
+    }
+  }
+
   return {
     version: CURRENT_VERSION,
     profile: {
       ...base.profile,
       ...(obj.profile || {}),
-      dropiColor: (() => {
-        const rawColor = obj.profile?.dropiColor;
-        if (typeof rawColor === 'string' && rawColor in LEGACY_COLOR_MAP) {
-          return LEGACY_COLOR_MAP[rawColor];
-        }
-        return normalizeDropiColor(rawColor);
-      })(),
-      dropiAccessory: normalizeDropiAccessory(obj.profile?.dropiAccessory),
+      dropiColor: migratedColor,
+      dropiAccessory: migratedAccessory,
     },
     logs: Array.isArray(obj.logs)
       ? obj.logs.filter(
@@ -131,6 +181,8 @@ export function migrateState(raw: unknown): TetesData {
     progress: {
       ...base.progress,
       ...(obj.progress || {}),
+      freezes: clampedFreezes,
+      streakFreezes: clampedFreezes,
     },
     achievements:
       obj.achievements && typeof obj.achievements === 'object'
@@ -140,10 +192,35 @@ export function migrateState(raw: unknown): TetesData {
       obj.quests && typeof obj.quests.date === 'string' && Array.isArray(obj.quests.items)
         ? obj.quests
         : base.quests,
-    settings: {
-      ...base.settings,
-      ...(obj.settings || {}),
-    },
+    settings: (() => {
+      const rawThemeMode = obj.settings?.themeMode;
+      const migratedThemeMode: ThemeMode =
+        rawThemeMode === 'auto' || rawThemeMode === 'light' || rawThemeMode === 'dark'
+          ? rawThemeMode
+          : obj.settings?.dark === true
+            ? 'dark'
+            : 'auto';
+      return {
+        ...base.settings,
+        ...(obj.settings || {}),
+        themeMode: migratedThemeMode,
+      };
+    })(),
+    dailyBoosters:
+      isSameBoosterDay && obj.dailyBoosters && typeof obj.dailyBoosters === 'object'
+        ? {
+            exercise: Boolean(obj.dailyBoosters.exercise),
+            hotWeather: Boolean(obj.dailyBoosters.hotWeather),
+          }
+        : base.dailyBoosters,
+    dailyBoostersDate: today,
+    drops:
+      typeof obj.drops === 'number' && Number.isFinite(obj.drops)
+        ? Math.max(0, Math.floor(obj.drops))
+        : base.drops,
+    unlockedColors: Array.from(unlockedColorsSet),
+    unlockedAccessories: Array.from(unlockedAccessoriesSet),
+    streakFreezes: clampedFreezes,
   };
 }
 
@@ -174,6 +251,58 @@ export function clearState(): void {
   }
 }
 
+export function validateBackupPayload(
+  raw: unknown
+): { valid: true; data: TetesData } | { valid: false; error: string } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {
+      valid: false,
+      error: 'Format file cadangan tidak valid. Pastikan file berasal dari ekspor Tetes.',
+    };
+  }
+
+  const obj = raw as Record<string, unknown>;
+  const hasProfile =
+    obj.profile !== null &&
+    typeof obj.profile === 'object' &&
+    !Array.isArray(obj.profile);
+  const hasLogs = Array.isArray(obj.logs);
+  const hasProgress =
+    obj.progress !== null &&
+    typeof obj.progress === 'object' &&
+    !Array.isArray(obj.progress);
+  const hasSettings =
+    obj.settings !== null &&
+    typeof obj.settings === 'object' &&
+    !Array.isArray(obj.settings);
+
+  if (!hasProfile || !hasLogs || !hasProgress || !hasSettings) {
+    return {
+      valid: false,
+      error: 'Struktur cadangan JSON tidak lengkap atau bukan file cadangan Tetes.',
+    };
+  }
+
+  const profileObj = obj.profile as Record<string, unknown>;
+  const progressObj = obj.progress as Record<string, unknown>;
+  if (
+    typeof profileObj.goalMl !== 'number' ||
+    !Number.isFinite(profileObj.goalMl) ||
+    typeof progressObj.xp !== 'number' ||
+    !Number.isFinite(progressObj.xp)
+  ) {
+    return {
+      valid: false,
+      error: 'Data profil atau progres pada file cadangan tidak valid.',
+    };
+  }
+
+  return {
+    valid: true,
+    data: migrateState(raw),
+  };
+}
+
 export function exportStateAsJson(state: TetesData): void {
   try {
     const blob = new Blob([JSON.stringify(state, null, 2)], {
@@ -182,7 +311,7 @@ export function exportStateAsJson(state: TetesData): void {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `tetes-hidrasi-${getLocalDateKey()}.json`;
+    a.download = `tetes-backup-${getLocalDateKey()}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

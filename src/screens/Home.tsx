@@ -2,8 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   CheckCircle2,
+  Coffee,
+  Coins,
+  CupSoda,
   Droplet,
   Flame,
+  Moon,
   Plus,
   RotateCcw,
   Shield,
@@ -11,6 +15,7 @@ import {
   Star,
   Trash2,
   X,
+  Zap,
 } from 'lucide-react';
 import { DropiMood, getDropiTheme } from '../components/DropiMascot';
 import { MyDropi } from '../components/MyDropi';
@@ -24,8 +29,17 @@ import { ComboPopup } from '../components/ComboPopup';
 import { HydrationQuoteCard } from '../components/HydrationQuoteCard';
 import { OfflineBanner } from '../components/PWAInstallButton';
 import { useTetes } from '../state/TetesContext';
-import { WaterLog } from '../lib/types';
-import { formatTimeShort } from '../lib/hydration';
+import { DrinkType, WaterLog } from '../lib/types';
+import {
+  calculateEffectiveMl,
+  DRINK_TYPE_OPTIONS,
+  formatTimeShort,
+  getDrinkReactionMessage,
+  getDrinkTypeOption,
+  getLogDrinkType,
+  getLogEffectiveMl,
+  getLogRawAmountMl,
+} from '../lib/hydration';
 import { parseTimeToMinutes } from '../lib/storage';
 import { DAILY_QUEST_DEFS } from '../lib/quests';
 import { getDropiMood } from '../lib/dropiMood';
@@ -33,24 +47,61 @@ import { soundEngine } from '../lib/sound';
 
 const QUICK_AMOUNTS = [100, 250, 500];
 
+const renderDrinkIcon = (type: DrinkType, className = 'w-4 h-4') => {
+  switch (type) {
+    case 'electrolyte':
+      return <Zap className={className} />;
+    case 'coffee_tea':
+      return <Coffee className={className} />;
+    case 'sweet':
+      return <CupSoda className={className} />;
+    default:
+      return <Droplet className={className} />;
+  }
+};
+
 export const Home: React.FC = () => {
   const {
     data,
     todayLogs,
     todayTotalMl,
+    dailyTargetMl,
+    dailyBoosters,
     todayPercent,
     minutesSinceLastDrink,
     reminderDue,
     lastDrinkFeedback,
     clearDrinkFeedback,
+    streakFreezeNotice,
+    dismissStreakFreezeNotice,
+    isWindDown,
+    checkDrinkPace,
     logWater,
     deleteLog,
     restoreLog,
     claimQuest,
+    toggleDailyBooster,
     setScreen,
   } = useTetes();
 
   const reduceMotion = useReducedMotion();
+
+  const [selectedDrinkType, setSelectedDrinkType] = useState<DrinkType>('water');
+  const [nonWaterReaction, setNonWaterReaction] = useState<string | null>(null);
+  const [pacingReminder, setPacingReminder] = useState<string | null>(null);
+  const reactionTimerRef = useRef<number | null>(null);
+  const pacingTimerRef = useRef<number | null>(null);
+
+  const [windDownWarning, setWindDownWarning] = useState<{
+    ml: number;
+    drinkType: DrinkType;
+  } | null>(null);
+  const [rapidIntakeWarning, setRapidIntakeWarning] = useState<{
+    ml: number;
+    drinkType: DrinkType;
+    recentTotalMl: number;
+    suggestedWaitMinutes: number;
+  } | null>(null);
 
   const [justDrank, setJustDrank] = useState(false);
   const [displayMl, setDisplayMl] = useState(todayTotalMl);
@@ -79,6 +130,8 @@ export const Home: React.FC = () => {
       timersRef.current.forEach((t) => window.clearTimeout(t));
       if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
       if (justDrankTimerRef.current) window.clearTimeout(justDrankTimerRef.current);
+      if (reactionTimerRef.current) window.clearTimeout(reactionTimerRef.current);
+      if (pacingTimerRef.current) window.clearTimeout(pacingTimerRef.current);
     };
   }, []);
 
@@ -109,8 +162,25 @@ export const Home: React.FC = () => {
     return () => cancelAnimationFrame(rafId);
   }, [todayTotalMl, reduceMotion]);
 
-  const handleDrink = (ml: number) => {
-    const feedback = logWater(ml);
+  const commitDrink = (ml: number, drinkType: DrinkType = selectedDrinkType) => {
+    setWindDownWarning(null);
+    setRapidIntakeWarning(null);
+    setPacingReminder(null);
+
+    const feedback = logWater(ml, drinkType);
+    const effMl = getLogEffectiveMl(feedback.log);
+    const rawMl = getLogRawAmountMl(feedback.log);
+    const reaction = getDrinkReactionMessage(drinkType, rawMl, effMl);
+
+    if (reactionTimerRef.current) window.clearTimeout(reactionTimerRef.current);
+    if (reaction) {
+      setNonWaterReaction(reaction);
+      reactionTimerRef.current = window.setTimeout(() => {
+        setNonWaterReaction(null);
+      }, 10000);
+    } else {
+      setNonWaterReaction(null);
+    }
 
     setJustDrank(true);
     if (justDrankTimerRef.current) window.clearTimeout(justDrankTimerRef.current);
@@ -118,7 +188,7 @@ export const Home: React.FC = () => {
       setJustDrank(false);
     }, 1600);
 
-    setFloatingMl({ id: feedback.log.id, ml: feedback.log.ml });
+    setFloatingMl({ id: feedback.log.id, ml: effMl });
     setFlyingXpKey(feedback.log.id);
     setShowSheet(false);
 
@@ -148,6 +218,33 @@ export const Home: React.FC = () => {
     }, 1350);
 
     timersRef.current.push(t1, t2, t3);
+  };
+
+  const evaluateRapidIntakeThenCommit = (
+    ml: number,
+    drinkType: DrinkType = selectedDrinkType
+  ) => {
+    const pace = checkDrinkPace(ml);
+    if (pace.isTooFast) {
+      soundEngine.play('pop', data.settings.sound);
+      setRapidIntakeWarning({
+        ml,
+        drinkType,
+        recentTotalMl: pace.recentTotalMl,
+        suggestedWaitMinutes: pace.suggestedWaitMinutes,
+      });
+      return;
+    }
+    commitDrink(ml, drinkType);
+  };
+
+  const handleDrink = (ml: number, drinkType: DrinkType = selectedDrinkType) => {
+    if (isWindDown && ml >= 300) {
+      soundEngine.play('click', data.settings.sound);
+      setWindDownWarning({ ml, drinkType });
+      return;
+    }
+    evaluateRapidIntakeThenCommit(ml, drinkType);
   };
 
   const handleContinueFeedback = () => {
@@ -182,9 +279,21 @@ export const Home: React.FC = () => {
   };
 
   const waterLevel =
-    data.profile.goalMl > 0
-      ? Math.min(1, todayTotalMl / data.profile.goalMl)
+    dailyTargetMl > 0
+      ? Math.min(1, todayTotalMl / dailyTargetMl)
       : 0;
+
+  const selectedDrinkOption = useMemo(
+    () => getDrinkTypeOption(selectedDrinkType),
+    [selectedDrinkType]
+  );
+
+  const mainQuickMl = isWindDown ? 150 : data.profile.cupMl;
+
+  const mainCupEffectiveMl = useMemo(
+    () => calculateEffectiveMl(mainQuickMl, selectedDrinkType),
+    [mainQuickMl, selectedDrinkType]
+  );
 
   const dropiTheme = useMemo(
     () => getDropiTheme(data.profile.dropiColor),
@@ -192,6 +301,10 @@ export const Home: React.FC = () => {
   );
 
   const dropiMood: DropiMood = useMemo(() => {
+    if (justDrank) return 'drinking';
+    if (waterLevel >= 1) return 'celebrate';
+    if (isWindDown) return 'sleepy';
+
     const now = new Date();
     const wakeMin = parseTimeToMinutes(data.profile.wakeTime);
     const sleepMin = parseTimeToMinutes(data.profile.sleepTime);
@@ -209,6 +322,7 @@ export const Home: React.FC = () => {
     });
   }, [
     waterLevel,
+    isWindDown,
     data.profile.wakeTime,
     data.profile.sleepTime,
     minutesSinceLastDrink,
@@ -216,6 +330,15 @@ export const Home: React.FC = () => {
   ]);
 
   const dropiSpeech = useMemo(() => {
+    if (pacingReminder) {
+      return pacingReminder;
+    }
+    if (nonWaterReaction) {
+      return nonWaterReaction;
+    }
+    if (isWindDown && dropiMood === 'sleepy') {
+      return 'Sudah mendekati jam tidur! Cukup teguk sedikit saja (100–150 ml) agar tidurmu nyenyak dan tidak terbangun untuk ke kamar mandi.';
+    }
     switch (dropiMood) {
       case 'drinking':
         return 'Glek glek... segarnya luar biasa!';
@@ -238,22 +361,32 @@ export const Home: React.FC = () => {
           ? 'Pagi! Yuk mulai harimu dengan segelas air.'
           : 'Satu teguk lagi biar fokus dan energimu tetap penuh!';
     }
-  }, [dropiMood, data.progress.streak, todayLogs.length]);
+  }, [
+    pacingReminder,
+    nonWaterReaction,
+    isWindDown,
+    dropiMood,
+    data.progress.streak,
+    todayLogs.length,
+  ]);
+
+  const boosterBonusMl = dailyTargetMl - data.profile.goalMl;
 
   return (
     <div className="pb-24">
-      {/* Header sapaan + Streak chip + XP chip */}
-      <header className="sticky top-0 z-20 flex items-center justify-between gap-2 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-3.5 sm:px-4 py-3 border-b border-[#E5E5E5]/70 dark:border-slate-800">
+      {/* Header sapaan + Streak + Pelindung + Koin Tetes + XP */}
+      <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-2 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-3 sm:px-4 py-2.5 border-b border-[#E5E5E5]/70 dark:border-slate-800">
         <div className="min-w-0">
-          <h1 className="font-display text-lg sm:text-xl font-extrabold text-[#3C3C3C] dark:text-white truncate">
+          <h1 className="font-display text-base sm:text-lg font-extrabold text-[#3C3C3C] dark:text-white truncate">
             Halo, {data.profile.name || 'Teman'}!
           </h1>
-          <p className="text-[11px] sm:text-xs font-bold text-[#777777] dark:text-slate-400 truncate">
-            Lv {data.progress.level} · Target {data.profile.goalMl.toLocaleString('id-ID')} ml
+          <p className="text-[11px] font-bold text-[#777777] dark:text-slate-400 truncate">
+            Lv {data.progress.level} · Target {dailyTargetMl.toLocaleString('id-ID')} ml
+            {boosterBonusMl > 0 ? ` (+${boosterBonusMl})` : ''}
           </p>
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
           {/* Chip Streak */}
           <button
             type="button"
@@ -262,27 +395,43 @@ export const Home: React.FC = () => {
               setScreen('streak');
             }}
             aria-label={`Streak ${data.progress.streak} hari`}
-            className="min-h-[38px] inline-flex items-center gap-1 rounded-full bg-[#FFF3DF] dark:bg-amber-950/60 border border-[#FFD18A] dark:border-amber-700/60 px-2.5 sm:px-3 py-1 text-xs sm:text-sm font-extrabold text-[#E07600] dark:text-[#FFAC33] cursor-pointer active:scale-95 transition-transform"
+            className="min-h-[34px] inline-flex items-center gap-1 rounded-full bg-[#FFF3DF] dark:bg-amber-950/60 border border-[#FFD18A] dark:border-amber-700/60 px-2 py-1 text-xs font-extrabold text-[#E07600] dark:text-[#FFAC33] cursor-pointer active:scale-95 transition-transform"
           >
-            <Flame className="w-4 h-4 fill-[#FF9600] text-[#FF9600]" />
+            <Flame className="w-3.5 h-3.5 fill-[#FF9600] text-[#FF9600]" />
             <span className="tabular-nums">{data.progress.streak}</span>
-            {data.progress.freezes > 0 && (
-              <span
-                title={`${data.progress.freezes} Pelindung Streak`}
-                className="inline-flex items-center gap-0.5 text-[11px] text-[#1CB0F6] ml-0.5"
-              >
-                <Shield className="w-3.5 h-3.5 fill-[#1CB0F6]/20" />
-                {data.progress.freezes}
-              </span>
-            )}
           </button>
+
+          {/* Chip Pelindung Streak */}
+          <button
+            type="button"
+            onClick={() => {
+              soundEngine.play('click', data.settings.sound);
+              setScreen('streak');
+            }}
+            title={`${data.streakFreezes} Pelindung Streak`}
+            aria-label={`${data.streakFreezes} Pelindung Streak`}
+            className="min-h-[34px] inline-flex items-center gap-1 rounded-full bg-[#E8F7FF] dark:bg-sky-950/60 border border-[#9BE0FF] dark:border-sky-700/60 px-2 py-1 text-xs font-extrabold text-[#0B82BA] dark:text-[#7CE0FF] cursor-pointer active:scale-95 transition-transform"
+          >
+            <Shield className="w-3.5 h-3.5 fill-[#1CB0F6]/25 text-[#1CB0F6]" />
+            <span className="tabular-nums">{data.streakFreezes}</span>
+          </button>
+
+          {/* Chip Koin Tetes */}
+          <div
+            title={`${data.drops} Koin Tetes`}
+            aria-label={`Saldo ${data.drops} Koin Tetes`}
+            className="min-h-[34px] inline-flex items-center gap-1 rounded-full bg-[#E6FFFA] dark:bg-teal-950/60 border border-[#8CE8D8] dark:border-teal-700/60 px-2 py-1 text-xs font-extrabold text-[#0B8770] dark:text-[#5EEAD4]"
+          >
+            <Coins className="w-3.5 h-3.5 text-[#14B8A6]" />
+            <span className="tabular-nums">{data.drops}</span>
+          </div>
 
           {/* Chip XP */}
           <div
             aria-label={`Total ${data.progress.xp} XP`}
-            className="min-h-[38px] inline-flex items-center gap-1 rounded-full bg-[#FFF9DC] dark:bg-yellow-950/50 border border-[#FFE47A] dark:border-yellow-700/60 px-2.5 sm:px-3 py-1 text-xs sm:text-sm font-extrabold text-[#B88600] dark:text-[#FFD633]"
+            className="min-h-[34px] inline-flex items-center gap-1 rounded-full bg-[#FFF9DC] dark:bg-yellow-950/50 border border-[#FFE47A] dark:border-yellow-700/60 px-2 py-1 text-xs font-extrabold text-[#B88600] dark:text-[#FFD633]"
           >
-            <Star className="w-4 h-4 fill-[#FFC800] text-[#FFC800]" />
+            <Star className="w-3.5 h-3.5 fill-[#FFC800] text-[#FFC800]" />
             <span className="tabular-nums">{data.progress.xp}</span>
           </div>
         </div>
@@ -290,9 +439,37 @@ export const Home: React.FC = () => {
 
       <OfflineBanner />
 
+      {/* Info Toast/Banner saat Pelindung Streak menyelamatkan streak */}
+      <AnimatePresence>
+        {streakFreezeNotice && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            role="status"
+            className="mx-4 mt-3 flex items-center justify-between gap-2.5 rounded-[18px] border-2 border-[#1CB0F6] bg-[#E8F7FF] dark:bg-[#0C2D48] px-3.5 py-2.5"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Shield className="w-5 h-5 shrink-0 text-[#1CB0F6] fill-[#1CB0F6]/20" />
+              <div className="text-xs font-extrabold text-[#0B6A99] dark:text-[#7CE0FF]">
+                Pelindung Streak menyelamatkan streak {streakFreezeNotice.savedStreak} harimu! Sisa {streakFreezeNotice.remainingFreezes} pelindung.
+              </div>
+            </div>
+            <button
+              type="button"
+              aria-label="Tutup info Pelindung Streak"
+              onClick={dismissStreakFreezeNotice}
+              className="shrink-0 min-h-[32px] min-w-[32px] flex items-center justify-center rounded-full text-[#0B6A99] dark:text-[#7CE0FF] hover:bg-black/5 cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Pengingat dalam aplikasi saat interval terlewati */}
       <AnimatePresence>
-        {reminderDue && !justDrank && (
+        {reminderDue && !justDrank && !isWindDown && (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -304,11 +481,52 @@ export const Home: React.FC = () => {
             </div>
             <button
               type="button"
-              onClick={() => handleDrink(data.profile.cupMl)}
+              onClick={() => handleDrink(mainQuickMl)}
               className="shrink-0 min-h-[36px] rounded-full bg-[#FFC800] px-3 py-1 text-xs font-extrabold text-[#3C3C3C] cursor-pointer active:scale-95"
             >
               Minum
             </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Peringatan ramah saat mencatat volume besar (>= 300 ml) pada fase Wind-Down */}
+      <AnimatePresence>
+        {windDownWarning && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            role="alertdialog"
+            aria-label="Peringatan minum malam"
+            className="mx-4 mt-3 rounded-[18px] border-2 border-[#A78BFA] dark:border-indigo-700 bg-[#F5F3FF] dark:bg-indigo-950/50 p-3.5 space-y-2.5"
+          >
+            <div className="flex items-start gap-2.5">
+              <Moon className="w-5 h-5 shrink-0 text-[#7C3AED] dark:text-indigo-300 mt-0.5" />
+              <p className="text-xs font-extrabold leading-relaxed text-[#4C1D95] dark:text-indigo-100">
+                Minum terlalu banyak menjelang tidur bisa bikin terbangun untuk buang air kecil. Yakin mau minum sebanyak ini ({windDownWarning.ml} ml)?
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setWindDownWarning(null)}
+                className="min-h-[36px] rounded-xl border border-[#DDD6FE] dark:border-indigo-700 bg-white dark:bg-slate-800 px-3 py-1 text-xs font-extrabold text-[#5B21B6] dark:text-indigo-200 cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const pending = windDownWarning;
+                  setWindDownWarning(null);
+                  evaluateRapidIntakeThenCommit(pending.ml, pending.drinkType);
+                }}
+                className="min-h-[36px] rounded-xl bg-[#7C3AED] px-3.5 py-1 text-xs font-extrabold text-white cursor-pointer active:scale-95"
+              >
+                Lanjut Catat
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -333,7 +551,7 @@ export const Home: React.FC = () => {
         <div className="relative flex items-center justify-center my-1">
           <div
             role="img"
-            aria-label={`Wadah air terisi ${todayPercent} persen, ${todayTotalMl} dari ${data.profile.goalMl} mililiter`}
+            aria-label={`Wadah air terisi ${todayPercent} persen, ${todayTotalMl} dari ${dailyTargetMl} mililiter`}
             className="relative w-48 h-60 rounded-[36px] overflow-hidden border-4 border-[#BAE6FD] dark:border-slate-700 bg-[#EBF8FF] dark:bg-slate-800 shadow-inner"
           >
             <WaterWave level={waterLevel} />
@@ -352,7 +570,7 @@ export const Home: React.FC = () => {
                 </div>
                 <div className="mt-1 text-xs font-extrabold text-[#3C3C3C] dark:text-slate-100 tabular-nums">
                   {displayMl.toLocaleString('id-ID')} /{' '}
-                  {data.profile.goalMl.toLocaleString('id-ID')} ml
+                  {dailyTargetMl.toLocaleString('id-ID')} ml
                 </div>
               </div>
             </div>
@@ -394,17 +612,97 @@ export const Home: React.FC = () => {
           </AnimatePresence>
         </div>
 
+        {/* Chip pengubah target harian sementara */}
+        <div
+          className="w-full mt-2 flex flex-wrap items-center justify-center gap-2"
+          role="group"
+          aria-label="Penyesuaian target hidrasi hari ini"
+        >
+          <button
+            type="button"
+            aria-pressed={dailyBoosters.exercise}
+            onClick={() => toggleDailyBooster('exercise')}
+            className={`min-h-[36px] inline-flex items-center gap-1.5 rounded-full border-2 px-3 py-1 text-xs font-extrabold transition-all cursor-pointer active:scale-95 ${
+              dailyBoosters.exercise
+                ? 'border-[#58CC02] bg-[#E8FDD8] dark:bg-emerald-950/60 text-[#2E7D00] dark:text-[#86EFAC]'
+                : 'border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 text-[#666666] dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+            }`}
+          >
+            <span>🏃 Olahraga (+500ml)</span>
+          </button>
+
+          <button
+            type="button"
+            aria-pressed={dailyBoosters.hotWeather}
+            onClick={() => toggleDailyBooster('hotWeather')}
+            className={`min-h-[36px] inline-flex items-center gap-1.5 rounded-full border-2 px-3 py-1 text-xs font-extrabold transition-all cursor-pointer active:scale-95 ${
+              dailyBoosters.hotWeather
+                ? 'border-[#FF9600] bg-[#FFF4E0] dark:bg-amber-950/60 text-[#B85D00] dark:text-[#FCD34D]'
+                : 'border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 text-[#666666] dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+            }`}
+          >
+            <span>☀️ Cuaca Panas (+300ml)</span>
+          </button>
+        </div>
+
+        {/* Selector Jenis Minuman ringkas */}
+        <div
+          className="w-full mt-3 grid grid-cols-4 gap-1.5 sm:gap-2"
+          role="radiogroup"
+          aria-label="Pilih jenis minuman"
+        >
+          {DRINK_TYPE_OPTIONS.map((opt) => {
+            const active = selectedDrinkType === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => {
+                  soundEngine.play('click', data.settings.sound);
+                  setSelectedDrinkType(opt.id);
+                }}
+                className={`min-h-[52px] flex flex-col items-center justify-center rounded-[14px] border-2 px-1 py-1.5 text-center transition-all cursor-pointer active:scale-95 ${
+                  active
+                    ? 'border-[#1CB0F6] bg-[#DDF4FF] dark:bg-[#0C2D48] text-[#1899D6] dark:text-[#7CE0FF]'
+                    : 'border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 text-[#666666] dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                }`}
+              >
+                {renderDrinkIcon(opt.id, 'w-4 h-4 shrink-0')}
+                <span className="mt-0.5 text-[11px] font-extrabold leading-tight truncate max-w-full">
+                  {opt.shortLabel}
+                </span>
+                <span className="text-[10px] font-bold opacity-80 tabular-nums">
+                  {opt.percentLabel}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
         {/* Tombol aksi 3D utama */}
-        <div className="w-full mt-3">
+        <div className="w-full mt-2.5">
           <Button3D
             variant="water"
             fullWidth
             size="lg"
             silent
-            onClick={() => handleDrink(data.profile.cupMl)}
+            onClick={() => handleDrink(mainQuickMl, selectedDrinkType)}
           >
-            <Droplet className="w-5 h-5 fill-white/30" />
-            + {data.profile.cupMl} ml
+            {isWindDown ? (
+              <Moon className="w-5 h-5" />
+            ) : (
+              renderDrinkIcon(selectedDrinkType, 'w-5 h-5')
+            )}
+            <span>
+              + {mainQuickMl} ml
+              {isWindDown && selectedDrinkType === 'water'
+                ? ' (Tegukan Malam)'
+                : selectedDrinkType !== 'water'
+                  ? ` ${selectedDrinkOption.shortLabel} (${mainCupEffectiveMl} ml)`
+                  : ''}
+            </span>
           </Button3D>
         </div>
 
@@ -414,8 +712,8 @@ export const Home: React.FC = () => {
             <button
               key={amt}
               type="button"
-              onClick={() => handleDrink(amt)}
-              className="min-h-[44px] rounded-[14px] border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#D5D5D5] dark:border-b-slate-800 bg-white dark:bg-slate-800 px-1 text-xs sm:text-sm font-extrabold text-[#1CB0F6] dark:text-[#4CC5FF] hover:bg-[#F2FAFF] dark:hover:bg-slate-750 active:border-b-2 active:translate-y-[2px] transition-all cursor-pointer tabular-nums whitespace-nowrap"
+              onClick={() => handleDrink(amt, selectedDrinkType)}
+              className="min-h-[44px] rounded-[14px] border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#D5D5D5] dark:border-b-slate-800 bg-white dark:bg-slate-800 px-1 text-xs sm:text-sm font-extrabold text-[#1CB0F6] dark:text-[#4CC5FF] hover:bg-[#F2FAFF] dark:hover:bg-slate-700 active:border-b-2 active:translate-y-[2px] transition-all cursor-pointer tabular-nums whitespace-nowrap"
             >
               +{amt}
             </button>
@@ -426,7 +724,7 @@ export const Home: React.FC = () => {
               soundEngine.play('click', data.settings.sound);
               setShowCustomSheet(true);
             }}
-            className="min-h-[44px] inline-flex items-center justify-center gap-0.5 sm:gap-1 rounded-[14px] border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#D5D5D5] dark:border-b-slate-800 bg-white dark:bg-slate-800 px-1 text-xs sm:text-sm font-extrabold text-[#777777] dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-750 active:border-b-2 active:translate-y-[2px] transition-all cursor-pointer whitespace-nowrap"
+            className="min-h-[44px] inline-flex items-center justify-center gap-0.5 sm:gap-1 rounded-[14px] border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#D5D5D5] dark:border-b-slate-800 bg-white dark:bg-slate-800 px-1 text-xs sm:text-sm font-extrabold text-[#777777] dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 active:border-b-2 active:translate-y-[2px] transition-all cursor-pointer whitespace-nowrap"
           >
             <Plus className="w-3.5 h-3.5 shrink-0" />
             Lainnya
@@ -447,7 +745,7 @@ export const Home: React.FC = () => {
             Misi Hari Ini
           </h2>
           <span className="text-xs font-bold text-[#777777] dark:text-slate-400">
-            Hadiah XP & Pelindung
+            Hadiah Koin, XP & Pelindung
           </span>
         </div>
 
@@ -472,7 +770,7 @@ export const Home: React.FC = () => {
                       {def.title}
                     </div>
                     <div className="text-xs font-bold text-[#777777] dark:text-slate-400 tabular-nums mt-0.5">
-                      {item.progress} / {def.target} {def.unit} · +{def.rewardXp} XP
+                      {item.progress} / {def.target} {def.unit} · +{def.rewardDrops} Koin · +{def.rewardXp} XP
                       {def.rewardFreeze ? ' + 1 Pelindung' : ''}
                     </div>
                   </div>
@@ -533,6 +831,10 @@ export const Home: React.FC = () => {
           <div className="rounded-[20px] border-2 border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 divide-y divide-[#F0F0F0] dark:divide-slate-700 overflow-hidden">
             {todayLogs.map((log, index) => {
               const confirming = confirmDeleteId === log.id;
+              const dType = getLogDrinkType(log);
+              const rawMl = getLogRawAmountMl(log);
+              const effMl = getLogEffectiveMl(log);
+              const opt = getDrinkTypeOption(dType);
               return (
                 <motion.div
                   key={log.id}
@@ -543,14 +845,21 @@ export const Home: React.FC = () => {
                 >
                   <div className="flex items-center gap-3">
                     <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#DDF4FF] dark:bg-[#0C2D48] text-[#1CB0F6]">
-                      <Droplet className="w-4 h-4 fill-[#1CB0F6]" />
+                      {renderDrinkIcon(dType, 'w-4 h-4')}
                     </div>
                     <div>
                       <div className="text-sm font-extrabold text-[#3C3C3C] dark:text-white tabular-nums">
-                        +{log.ml} ml
+                        +{effMl} ml
+                        {dType !== 'water' && (
+                          <span className="ml-1.5 text-xs font-bold text-[#1CB0F6]">
+                            efektif
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs font-bold text-[#777777] dark:text-slate-400 tabular-nums">
-                        Pukul {formatTimeShort(log.ts)}
+                        {dType !== 'water'
+                          ? `${rawMl} ml ${opt.shortLabel} · Pukul ${formatTimeShort(log.ts)}`
+                          : `Pukul ${formatTimeShort(log.ts)}`}
                       </div>
                     </div>
                   </div>
@@ -576,7 +885,7 @@ export const Home: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setConfirmDeleteId(log.id)}
-                      aria-label={`Hapus catatan ${log.ml} ml pukul ${formatTimeShort(log.ts)}`}
+                      aria-label={`Hapus catatan ${effMl} ml pukul ${formatTimeShort(log.ts)}`}
                       className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-slate-400 hover:text-[#FF4B4B] hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -600,7 +909,7 @@ export const Home: React.FC = () => {
             role="status"
           >
             <span className="text-sm font-bold tabular-nums">
-              Catatan +{undoLog.ml} ml dihapus
+              Catatan +{getLogEffectiveMl(undoLog)} ml dihapus
             </span>
             <button
               type="button"
@@ -642,10 +951,52 @@ export const Home: React.FC = () => {
                 </button>
               </div>
 
+              <div className="mb-4">
+                <div className="text-xs font-extrabold text-[#777777] dark:text-slate-400 mb-2">
+                  Pilih Jenis Minuman
+                </div>
+                <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
+                  {DRINK_TYPE_OPTIONS.map((opt) => {
+                    const active = selectedDrinkType === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          soundEngine.play('click', data.settings.sound);
+                          setSelectedDrinkType(opt.id);
+                        }}
+                        className={`min-h-[52px] flex flex-col items-center justify-center rounded-[14px] border-2 px-1 py-1.5 text-center transition-all cursor-pointer ${
+                          active
+                            ? 'border-[#1CB0F6] bg-[#DDF4FF] dark:bg-[#0C2D48] text-[#1899D6] dark:text-[#7CE0FF]'
+                            : 'border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 text-[#666666] dark:text-slate-300'
+                        }`}
+                      >
+                        {renderDrinkIcon(opt.id, 'w-4 h-4 shrink-0')}
+                        <span className="mt-0.5 text-[11px] font-extrabold leading-tight truncate max-w-full">
+                          {opt.shortLabel}
+                        </span>
+                        <span className="text-[10px] font-bold opacity-80 tabular-nums">
+                          {opt.percentLabel}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="rounded-[20px] bg-[#F7FAFC] dark:bg-slate-800 p-5 text-center mb-4">
                 <div className="font-display text-4xl font-extrabold text-[#1CB0F6] tabular-nums">
                   {customMl} ml
                 </div>
+                {selectedDrinkType !== 'water' && (
+                  <div className="mt-1 text-xs font-extrabold text-[#777777] dark:text-slate-300 tabular-nums">
+                    {selectedDrinkOption.label} →{' '}
+                    <span className="text-[#1CB0F6]">
+                      {calculateEffectiveMl(customMl, selectedDrinkType)} ml efektif
+                    </span>
+                  </div>
+                )}
                 <input
                   type="range"
                   min={50}
@@ -670,11 +1021,96 @@ export const Home: React.FC = () => {
                 silent
                 onClick={() => {
                   setShowCustomSheet(false);
-                  handleDrink(customMl);
+                  handleDrink(customMl, selectedDrinkType);
                 }}
               >
                 Catat +{customMl} ml
+                {selectedDrinkType !== 'water'
+                  ? ` (${calculateEffectiveMl(customMl, selectedDrinkType)} ml efektif)`
+                  : ''}
               </Button3D>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Peringatan Pacing / Terlalu Banyak Minum dalam Waktu Dekat (Fase 6) */}
+      <AnimatePresence>
+        {rapidIntakeWarning && (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/55 backdrop-blur-[2px] p-0 sm:p-4">
+            <motion.div
+              initial={reduceMotion ? { opacity: 0 } : { y: 40, opacity: 0, scale: 0.96 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={reduceMotion ? { opacity: 0 } : { y: 40, opacity: 0, scale: 0.96 }}
+              transition={{ type: 'spring', stiffness: 320, damping: 28 }}
+              role="alertdialog"
+              aria-labelledby="rapid-intake-title"
+              aria-describedby="rapid-intake-desc"
+              className="w-full max-w-[430px] rounded-t-[24px] sm:rounded-[24px] border-2 border-[#BCE8FF] dark:border-slate-700 bg-white dark:bg-slate-900 px-5 pt-4 pb-6 shadow-2xl"
+            >
+              <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-[#E5E5E5] dark:bg-slate-700 sm:hidden" />
+
+              <div className="flex flex-col items-center text-center">
+                <MyDropi mood="wow" size={96} />
+
+                <h3
+                  id="rapid-intake-title"
+                  className="mt-2 font-display text-xl font-extrabold text-[#3C3C3C] dark:text-white"
+                >
+                  Pelan-pelan teguknya! 💧
+                </h3>
+
+                <p
+                  id="rapid-intake-desc"
+                  className="mt-2 text-xs sm:text-sm font-bold leading-relaxed text-[#555555] dark:text-slate-300"
+                >
+                  Kamu sudah mencatat{' '}
+                  <strong className="text-[#1CB0F6] dark:text-[#4CC5FF] tabular-nums">
+                    {rapidIntakeWarning.recentTotalMl.toLocaleString('id-ID')} ml
+                  </strong>{' '}
+                  dalam 1 jam terakhir. Minum terlalu banyak sekaligus membuat ginjal cepat membuangnya lewat urine sehingga penyerapan cairan kurang optimal. Sebaiknya tunggu sekitar{' '}
+                  <strong className="text-[#FF9600] dark:text-[#FBBF24] tabular-nums">
+                    {rapidIntakeWarning.suggestedWaitMinutes} menit
+                  </strong>{' '}
+                  lagi.
+                </p>
+              </div>
+
+              <div className="mt-5 grid grid-cols-2 gap-2.5">
+                <Button3D
+                  variant="white"
+                  fullWidth
+                  size="md"
+                  onClick={() => {
+                    const waitMins = rapidIntakeWarning.suggestedWaitMinutes;
+                    setRapidIntakeWarning(null);
+                    setPacingReminder(
+                      `Sip! Istirahatkan sejenak, tunggu sekitar ${waitMins} menit lagi agar penyerapan air makin optimal.`
+                    );
+                    if (pacingTimerRef.current) {
+                      window.clearTimeout(pacingTimerRef.current);
+                    }
+                    pacingTimerRef.current = window.setTimeout(() => {
+                      setPacingReminder(null);
+                    }, 9000);
+                  }}
+                >
+                  Tunggu Nanti
+                </Button3D>
+
+                <Button3D
+                  variant="water"
+                  fullWidth
+                  size="md"
+                  silent
+                  onClick={() => {
+                    const pending = rapidIntakeWarning;
+                    commitDrink(pending.ml, pending.drinkType);
+                  }}
+                >
+                  Tetap Catat
+                </Button3D>
+              </div>
             </motion.div>
           </div>
         )}

@@ -4,6 +4,12 @@ import { Check } from 'lucide-react';
 import { Button3D } from './Button3D';
 import { MyDropi } from './MyDropi';
 import { DrinkEventFeedback } from '../state/TetesContext';
+import {
+  getDrinkTypeOption,
+  getLogDrinkType,
+  getLogEffectiveMl,
+  getLogRawAmountMl,
+} from '../lib/hydration';
 
 interface FeedbackSheetProps {
   feedback: DrinkEventFeedback | null;
@@ -98,8 +104,18 @@ export const FeedbackSheet: React.FC<FeedbackSheetProps> = ({
                   {title}
                 </h3>
                 <p className="text-sm font-bold text-[#3A8E00] dark:text-[#86E64D] tabular-nums">
-                  +{feedback.log.ml} ml tercatat · +{feedback.xpEarned} XP
-                  {feedback.justHitGoal ? ' · Target tercapai!' : ''}
+                  {(() => {
+                    const dType = getLogDrinkType(feedback.log);
+                    const rawMl = getLogRawAmountMl(feedback.log);
+                    const effMl = getLogEffectiveMl(feedback.log);
+                    const opt = getDrinkTypeOption(dType);
+                    return dType === 'water'
+                      ? `+${effMl} ml tercatat · +${feedback.xpEarned} XP`
+                      : `+${rawMl} ml ${opt.shortLabel} (${effMl} ml efektif) · +${feedback.xpEarned} XP`;
+                  })()}
+                  {feedback.justHitGoal
+                    ? ` · Target tercapai!${feedback.goalBonusDrops > 0 ? ` (+${feedback.goalBonusDrops} Koin)` : ''}`
+                    : ''}
                 </p>
               </div>
             </div>

@@ -3,9 +3,18 @@ import {
   applyLogToProgress,
   getCurrentWeekStrip,
   reconcileStreak,
+  reconcileStreakWithInfo,
   removeLogFromProgress,
 } from '../streak';
-import { loadState, saveState } from '../storage';
+import { createDefaultState, loadState, migrateState, saveState } from '../storage';
+import { DAILY_QUEST_DEFS } from '../quests';
+import {
+  DROPI_ACCESSORY_PRICES,
+  DROPI_COLOR_PRICES,
+  GOAL_BONUS_DROPS,
+  MAX_STREAK_FREEZES,
+  STREAK_FREEZE_PRICE,
+} from '../hydration';
 import { ProgressState, WaterLog } from '../types';
 
 const baseProgress = (overrides: Partial<ProgressState> = {}): ProgressState => ({
@@ -138,5 +147,60 @@ describe('streak.ts — kenaikan, anti-dobel, rollback hapus, reset, dan pelindu
         configurable: true,
       });
     }
+  });
+
+  it('menggunakan streakFreezes dan mengembalikan info usedFreeze saat menyelamatkan streak', () => {
+    const p = baseProgress({
+      streak: 7,
+      longestStreak: 7,
+      freezes: 2,
+      streakFreezes: 2,
+      lastGoalDate: '2026-11-21',
+    });
+
+    const result = reconcileStreakWithInfo(p, '2026-11-23');
+    expect(result.usedFreeze).toBe(true);
+    expect(result.savedStreak).toBe(7);
+    expect(result.nextProgress.streak).toBe(7);
+    expect(result.nextProgress.freezes).toBe(1);
+    expect(result.nextProgress.streakFreezes).toBe(1);
+    expect(result.nextProgress.lastGoalDate).toBe('2026-11-22');
+  });
+
+  it('menginisialisasi state ekonomi Koin Tetes, item terbuka default, hadiah misi, dan harga toko', () => {
+    const fresh = createDefaultState();
+    expect(fresh.drops).toBe(50);
+    expect(fresh.unlockedColors).toEqual(['blue', 'teal']);
+    expect(fresh.unlockedAccessories).toEqual(['none']);
+    expect(fresh.streakFreezes).toBe(1);
+
+    const migrated = migrateState({ streakFreezes: 5, drops: 120 });
+    expect(migrated.drops).toBe(120);
+    expect(migrated.streakFreezes).toBe(MAX_STREAK_FREEZES);
+    expect(migrated.unlockedColors).toEqual(['blue', 'teal']);
+    expect(migrated.unlockedAccessories).toEqual(['none']);
+
+    for (const q of DAILY_QUEST_DEFS) {
+      expect(q.rewardDrops).toBeGreaterThanOrEqual(15);
+      expect(q.rewardDrops).toBeLessThanOrEqual(30);
+    }
+    expect(GOAL_BONUS_DROPS).toBeGreaterThanOrEqual(15);
+    expect(GOAL_BONUS_DROPS).toBeLessThanOrEqual(30);
+
+    expect(DROPI_COLOR_PRICES).toEqual({
+      blue: 0,
+      teal: 0,
+      green: 40,
+      purple: 60,
+      yellow: 60,
+      pink: 80,
+    });
+    expect(DROPI_ACCESSORY_PRICES).toEqual({
+      none: 0,
+      hat: 50,
+      glasses: 75,
+      crown: 120,
+    });
+    expect(STREAK_FREEZE_PRICE).toBe(50);
   });
 });

@@ -1,6 +1,6 @@
 import { AchievementRecord, AchievementTier, ProgressState, WaterLog } from './types';
 import { getLocalDateKey } from './storage';
-import { getTotalMlAllTime } from './hydration';
+import { getLogEffectiveMl, getTotalMlAllTime } from './hydration';
 
 export interface AchievementDefinition {
   id: string;
@@ -110,7 +110,7 @@ export function computeAchievementValue(
       for (const l of logs) {
         const k = getLocalDateKey(new Date(l.ts));
         if (dayTotals.has(k)) {
-          dayTotals.set(k, (dayTotals.get(k) || 0) + l.ml);
+          dayTotals.set(k, (dayTotals.get(k) || 0) + getLogEffectiveMl(l));
         }
       }
       let hits = 0;

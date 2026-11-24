@@ -47,10 +47,22 @@ export interface Profile {
   onboarded: boolean;
 }
 
-export interface WaterLog {
+export type DrinkType = 'water' | 'electrolyte' | 'coffee_tea' | 'sweet';
+
+export interface DrinkLog {
   id: string;
   ts: string; // ISO string
-  ml: number;
+  ml: number; // effective ml (backward-compatible with legacy logs)
+  rawAmountMl?: number;
+  drinkType?: DrinkType;
+  effectiveMl?: number;
+}
+
+export type WaterLog = DrinkLog;
+
+export interface DailyBoosters {
+  exercise: boolean;
+  hotWeather: boolean;
 }
 
 export interface ProgressState {
@@ -59,7 +71,9 @@ export interface ProgressState {
   streak: number;
   longestStreak: number;
   freezes: number;
+  streakFreezes?: number;
   lastGoalDate: string | null; // YYYY-MM-DD local
+  lastGoalDropsDate?: string | null; // YYYY-MM-DD local
   lastFreezeUsedDate?: string | null;
   prevStreakBeforeToday?: number;
   prevGoalDateBeforeToday?: string | null;
@@ -81,10 +95,13 @@ export interface QuestsState {
   items: QuestProgressItem[];
 }
 
+export type ThemeMode = 'auto' | 'light' | 'dark';
+
 export interface SettingsState {
   sound: boolean;
   haptics: boolean;
   dark: boolean;
+  themeMode: ThemeMode;
   reminderMinutes: 60 | 90 | 120;
   notifications: boolean;
 }
@@ -92,9 +109,15 @@ export interface SettingsState {
 export interface TetesData {
   version: number;
   profile: Profile;
-  logs: WaterLog[];
+  logs: DrinkLog[];
   progress: ProgressState;
   achievements: Record<string, AchievementRecord | undefined>;
   quests: QuestsState;
   settings: SettingsState;
+  dailyBoosters: DailyBoosters;
+  dailyBoostersDate?: string; // YYYY-MM-DD local
+  drops: number;
+  unlockedColors: DropiColorId[];
+  unlockedAccessories: DropiAccessoryId[];
+  streakFreezes: number;
 }

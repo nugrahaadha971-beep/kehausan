@@ -148,11 +148,11 @@ export const StreakScreen: React.FC = () => {
             ))}
           </div>
 
-          {data.progress.freezes > 0 && (
+          {data.streakFreezes > 0 && (
             <div className="mt-3 flex items-center justify-center gap-1.5 text-xs font-bold text-[#9BE7FF]">
               <Shield className="w-3.5 h-3.5" />
               <span>
-                Kamu punya {data.progress.freezes} Pelindung Streak siap menjaga harimu
+                Kamu punya {data.streakFreezes} Pelindung Streak siap menjaga harimu
               </span>
             </div>
           )}
