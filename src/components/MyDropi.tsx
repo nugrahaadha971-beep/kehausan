@@ -6,12 +6,14 @@ export interface MyDropiProps {
   mood?: DropiMood;
   size?: number;
   className?: string;
+  onPoke?: () => void;
 }
 
 export const MyDropi: React.FC<MyDropiProps> = ({
   mood = 'happy',
   size = 140,
   className = '',
+  onPoke,
 }) => {
   const {
     data: { profile },
@@ -24,6 +26,7 @@ export const MyDropi: React.FC<MyDropiProps> = ({
       className={className}
       color={profile.dropiColor}
       accessory={profile.dropiAccessory}
+      onPoke={onPoke}
     />
   );
 };

@@ -21,6 +21,7 @@ import { Button3D } from '../components/Button3D';
 import { ProgressBar } from '../components/ProgressBar';
 import { FeedbackSheet } from '../components/FeedbackSheet';
 import { ComboPopup } from '../components/ComboPopup';
+import { HydrationQuoteCard } from '../components/HydrationQuoteCard';
 import { OfflineBanner } from '../components/PWAInstallButton';
 import { useTetes } from '../state/TetesContext';
 import { WaterLog } from '../lib/types';
@@ -432,6 +433,9 @@ export const Home: React.FC = () => {
           </button>
         </div>
       </section>
+
+      {/* Kata Mutiara Hidrasi */}
+      <HydrationQuoteCard />
 
       {/* Kartu Misi Harian (Quests) */}
       <section className="px-4 mt-5" aria-labelledby="quests-heading">
