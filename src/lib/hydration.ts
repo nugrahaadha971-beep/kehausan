@@ -233,6 +233,9 @@ export const DROPI_COLOR_UNLOCK_LEVELS: Record<DropiColorId, number> = {
   purple: 5,
   yellow: 7,
   pink: 10,
+  aqua_neon: 12,
+  royal_gold: 15,
+  aurora_berry: 18,
 };
 
 export const DROPI_ACCESSORY_UNLOCK_LEVELS: Record<DropiAccessoryId, number> = {
@@ -252,6 +255,9 @@ export const DROPI_COLOR_PRICES: Record<DropiColorId, number> = {
   purple: 60,
   yellow: 60,
   pink: 80,
+  aqua_neon: 160,
+  royal_gold: 220,
+  aurora_berry: 260,
 };
 
 export const DROPI_ACCESSORY_PRICES: Record<DropiAccessoryId, number> = {
@@ -543,4 +549,141 @@ export function checkRapidIntake(
     suggestedWaitMinutes,
   };
 }
+
+export interface AffordableShopItem {
+  id: string;
+  category: 'color' | 'accessory' | 'freeze';
+  label: string;
+  price: number;
+}
+
+const COLOR_LABELS: Record<DropiColorId, string> = {
+  blue: 'Warna Biru Dropi',
+  teal: 'Warna Toska Segar',
+  green: 'Warna Hijau Mint',
+  purple: 'Warna Ungu Berry',
+  yellow: 'Warna Kuning Cerah',
+  pink: 'Warna Pink Coral',
+  aqua_neon: 'Edisi Terbatas: Aqua Neon',
+  royal_gold: 'Edisi Terbatas: Royal Gold',
+  aurora_berry: 'Edisi Terbatas: Aurora Berry',
+};
+
+const ACCESSORY_LABELS: Record<DropiAccessoryId, string> = {
+  none: 'Polos',
+  hat: 'Aksesori Topi',
+  glasses: 'Aksesori Kacamata',
+  crown: 'Aksesori Mahkota',
+};
+
+export function getAffordableShopItems(params: {
+  drops: number;
+  unlockedColors: DropiColorId[];
+  unlockedAccessories: DropiAccessoryId[];
+  streakFreezes: number;
+}): AffordableShopItem[] {
+  const { drops, unlockedColors, unlockedAccessories, streakFreezes } = params;
+  const items: AffordableShopItem[] = [];
+
+  (Object.keys(DROPI_COLOR_PRICES) as DropiColorId[]).forEach((id) => {
+    const price = DROPI_COLOR_PRICES[id];
+    if (price > 0 && !unlockedColors.includes(id) && drops >= price) {
+      items.push({
+        id: `color:${id}`,
+        category: 'color',
+        label: COLOR_LABELS[id],
+        price,
+      });
+    }
+  });
+
+  (Object.keys(DROPI_ACCESSORY_PRICES) as DropiAccessoryId[]).forEach((id) => {
+    const price = DROPI_ACCESSORY_PRICES[id];
+    if (price > 0 && !unlockedAccessories.includes(id) && drops >= price) {
+      items.push({
+        id: `accessory:${id}`,
+        category: 'accessory',
+        label: ACCESSORY_LABELS[id],
+        price,
+      });
+    }
+  });
+
+  if (streakFreezes < MAX_STREAK_FREEZES && drops >= STREAK_FREEZE_PRICE) {
+    items.push({
+      id: 'freeze:streak',
+      category: 'freeze',
+      label: 'Pelindung Streak',
+      price: STREAK_FREEZE_PRICE,
+    });
+  }
+
+  return items.sort((a, b) => a.price - b.price);
+}
+
+export interface SplinePoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Menghasilkan path SVG kurva kubik halus monoton (Fritsch-Carlson) agar kurva tidak overshoot
+ * melewati batas bawah (0 ml) atau puncak nilai saat terjadi lonjakan antar hari.
+ */
+export function buildMonotoneSplinePath(points: SplinePoint[]): string {
+  if (points.length === 0) return '';
+  if (points.length === 1) {
+    return `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+  }
+
+  const n = points.length;
+  const slopes: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    const dx = points[i + 1].x - points[i].x;
+    const dy = points[i + 1].y - points[i].y;
+    slopes.push(dx !== 0 ? dy / dx : 0);
+  }
+
+  const tangents: number[] = new Array(n).fill(0);
+  tangents[0] = slopes[0];
+  tangents[n - 1] = slopes[n - 2];
+
+  for (let i = 1; i < n - 1; i++) {
+    if (slopes[i - 1] * slopes[i] <= 0) {
+      tangents[i] = 0;
+    } else {
+      tangents[i] = (slopes[i - 1] + slopes[i]) / 2;
+    }
+  }
+
+  for (let i = 0; i < n - 1; i++) {
+    if (Math.abs(slopes[i]) < 1e-6) {
+      tangents[i] = 0;
+      tangents[i + 1] = 0;
+    } else {
+      const a = tangents[i] / slopes[i];
+      const b = tangents[i + 1] / slopes[i];
+      const norm = Math.hypot(a, b);
+      if (norm > 3) {
+        const scale = 3 / norm;
+        tangents[i] = scale * a * slopes[i];
+        tangents[i + 1] = scale * b * slopes[i];
+      }
+    }
+  }
+
+  let d = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const p0 = points[i];
+    const p1 = points[i + 1];
+    const dx = (p1.x - p0.x) / 3;
+    const cp1x = p0.x + dx;
+    const cp1y = p0.y + tangents[i] * dx;
+    const cp2x = p1.x - dx;
+    const cp2y = p1.y - tangents[i + 1] * dx;
+    d += ` C ${cp1x.toFixed(2)} ${cp1y.toFixed(2)}, ${cp2x.toFixed(2)} ${cp2y.toFixed(2)}, ${p1.x.toFixed(2)} ${p1.y.toFixed(2)}`;
+  }
+  return d;
+}
+
 

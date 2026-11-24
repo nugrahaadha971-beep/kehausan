@@ -33,6 +33,54 @@
   font-variant-numeric: tabular-nums;
 }
 
+@keyframes wave-drift-back {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@keyframes wave-drift-front {
+  0% {
+    transform: translate3d(-50%, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes micro-bubble-rise {
+  0% {
+    transform: translate3d(0, 8px, 0) scale(0.75);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.75;
+  }
+  75% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: translate3d(var(--bubble-sway, 5px), -170px, 0) scale(1.08);
+    opacity: 0;
+  }
+}
+
+.animate-wave-back {
+  animation: wave-drift-back 7.8s linear infinite;
+}
+
+.animate-wave-front {
+  animation: wave-drift-front 5.2s linear infinite;
+}
+
+.animate-micro-bubble {
+  animation: micro-bubble-rise var(--bubble-duration, 6s) ease-in-out infinite;
+  animation-delay: var(--bubble-delay, 0s);
+}
+
 @keyframes progress-shine {
   0% {
     transform: translateX(-100%);
@@ -75,7 +123,11 @@
 @media (prefers-reduced-motion: reduce) {
   .animate-shine,
   .animate-sunburst,
-  .animate-flame {
+  .animate-flame,
+  .animate-wave-back,
+  .animate-wave-front,
+  .animate-micro-bubble {
     animation: none !important;
   }
 }
+

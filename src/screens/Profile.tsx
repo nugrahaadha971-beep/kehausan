@@ -355,8 +355,9 @@ export const Profile: React.FC = () => {
               </span>
             </div>
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5">
-              {(Object.entries(DROPI_COLORS) as [DropiColor, DropiTheme][]).map(
-                ([colorId, theme]) => {
+              {(Object.entries(DROPI_COLORS) as [DropiColor, DropiTheme][])
+                .filter(([, theme]) => !theme.limited)
+                .map(([colorId, theme]) => {
                   const unlocked = data.unlockedColors.includes(colorId);
                   const selected = currentColor === colorId;
                   const price = DROPI_COLOR_PRICES[colorId] ?? 0;
@@ -410,8 +411,95 @@ export const Profile: React.FC = () => {
                       )}
                     </button>
                   );
-                }
-              )}
+                })}
+            </div>
+          </div>
+
+          {/* Koleksi Warna Edisi Terbatas */}
+          <div className="mt-4 rounded-[18px] border-2 border-[#FDE68A] dark:border-amber-700/60 bg-gradient-to-br from-[#FFFBEB] via-[#FFFFFF] to-[#F0FDFA] dark:from-amber-950/30 dark:via-slate-800/80 dark:to-cyan-950/30 p-3">
+            <div className="flex items-center justify-between gap-2 mb-2.5">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-[#D97706] dark:text-[#FBBF24]" />
+                <span className="text-xs font-extrabold text-[#92400E] dark:text-[#FCD34D]">
+                  Koleksi Edisi Terbatas
+                </span>
+              </div>
+              <span className="rounded-md bg-[#FEF3C7] dark:bg-amber-900/60 px-2 py-0.5 text-[10px] font-extrabold text-[#B45309] dark:text-[#FDE68A]">
+                Eksklusif
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              {(Object.entries(DROPI_COLORS) as [DropiColor, DropiTheme][])
+                .filter(([, theme]) => Boolean(theme.limited))
+                .map(([colorId, theme]) => {
+                  const unlocked = data.unlockedColors.includes(colorId);
+                  const selected = currentColor === colorId;
+                  const price = DROPI_COLOR_PRICES[colorId] ?? 0;
+                  return (
+                    <button
+                      key={colorId}
+                      type="button"
+                      title={
+                        unlocked
+                          ? `${theme.label} (Edisi Terbatas)`
+                          : `Beli ${theme.label} seharga ${price} Koin Tetes`
+                      }
+                      aria-label={
+                        unlocked
+                          ? `Pakai warna edisi terbatas ${theme.label}`
+                          : `Beli warna edisi terbatas ${theme.label} seharga ${price} koin`
+                      }
+                      onClick={() => {
+                        const res = buyDropiColor(colorId);
+                        if (!res.ok && res.reason === 'insufficient_drops') {
+                          setShopFeedback({
+                            text: `Koin Tetes belum cukup untuk ${theme.label} (butuh ${price} koin).`,
+                            tone: 'error',
+                          });
+                        } else if (res.ok && res.reason !== 'already_unlocked') {
+                          setShopFeedback({
+                            text: `Koleksi Edisi Terbatas ${theme.label} berhasil dibuka & dipakai!`,
+                            tone: 'success',
+                          });
+                        } else {
+                          setShopFeedback(null);
+                        }
+                      }}
+                      className={`relative flex flex-col items-center justify-between rounded-[14px] border-2 p-2 text-center transition-all cursor-pointer active:scale-95 ${
+                        selected
+                          ? 'border-[#1CB0F6] bg-white dark:bg-slate-800 ring-2 ring-[#1CB0F6]/30 shadow-sm'
+                          : unlocked
+                            ? 'border-[#E5E5E5] dark:border-slate-700 bg-white/90 dark:bg-slate-800/90 hover:border-[#1CB0F6]/60'
+                            : 'border-[#F3E8D2] dark:border-slate-700/80 bg-white/70 dark:bg-slate-800/70'
+                      }`}
+                    >
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          background: `linear-gradient(135deg, ${theme.light} 0%, ${theme.base} 55%, ${theme.dark} 100%)`,
+                        }}
+                        className="relative h-9 w-full rounded-[10px] border border-black/10 flex items-center justify-center shadow-inner"
+                      >
+                        {!unlocked && (
+                          <span className="inline-flex items-center gap-0.5 rounded-md bg-black/50 px-1.5 py-0.5 text-[10px] font-extrabold text-white">
+                            <Lock className="w-2.5 h-2.5" />
+                            <span className="tabular-nums">{price}</span>
+                          </span>
+                        )}
+                        {unlocked && selected && (
+                          <Sparkles className="w-4 h-4 text-white drop-shadow" />
+                        )}
+                      </span>
+                      <span className="mt-1.5 text-[11px] font-extrabold text-[#3C3C3C] dark:text-slate-100 leading-tight">
+                        {theme.label}
+                      </span>
+                      <span className="mt-0.5 text-[10px] font-bold text-[#777777] dark:text-slate-400 tabular-nums">
+                        {unlocked ? (selected ? 'Dipakai' : 'Dimiliki') : `${price} koin`}
+                      </span>
+                    </button>
+                  );
+                })}
             </div>
           </div>
 

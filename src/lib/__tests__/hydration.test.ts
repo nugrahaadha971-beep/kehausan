@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   analyzeDrySpellWindow,
+  buildMonotoneSplinePath,
   calculateDailyTargetMl,
   calculateEffectiveMl,
   calculateLevel,
   calculateRecommendedGoal,
   checkRapidIntake,
   DRINK_HYDRATION_FACTORS,
+  getAffordableShopItems,
   getDrinkReactionMessage,
   getLogDrinkType,
   getLogEffectiveMl,
@@ -20,6 +22,7 @@ import {
   isWindDownActive,
   resolveEffectiveDarkMode,
 } from '../hydration';
+import { getGlugPitchMultiplier } from '../sound';
 import { DrinkLog } from '../types';
 import {
   createDefaultState,
@@ -315,4 +318,74 @@ describe('Fase 6 — checkRapidIntake (Peringatan Pacing)', () => {
     expect(res.suggestedWaitMinutes).toBe(18);
   });
 });
+
+describe('Toko Dropi — getAffordableShopItems', () => {
+  it('mengembalikan item toko yang belum dimiliki dan terjangkau, urut termurah ke termahal', () => {
+    const items = getAffordableShopItems({
+      drops: 60,
+      unlockedColors: ['blue', 'teal'],
+      unlockedAccessories: ['none'],
+      streakFreezes: 1,
+    });
+    expect(items.map((i) => i.id)).toEqual([
+      'color:green',
+      'accessory:hat',
+      'freeze:streak',
+      'color:purple',
+      'color:yellow',
+    ]);
+  });
+
+  it('tidak menyertakan item yang sudah dimiliki maupun pelindung streak jika sudah maksimal', () => {
+    const items = getAffordableShopItems({
+      drops: 50,
+      unlockedColors: ['blue', 'teal', 'green'],
+      unlockedAccessories: ['none', 'hat'],
+      streakFreezes: 3,
+    });
+    expect(items).toEqual([]);
+  });
+  it('menyertakan warna Edisi Terbatas saat saldo koin mencukupi', () => {
+    const items = getAffordableShopItems({
+      drops: 260,
+      unlockedColors: ['blue', 'teal', 'green', 'purple', 'yellow', 'pink'],
+      unlockedAccessories: ['none', 'hat', 'glasses', 'crown'],
+      streakFreezes: 3,
+    });
+    expect(items.map((i) => i.id)).toEqual([
+      'color:aqua_neon',
+      'color:royal_gold',
+      'color:aurora_berry',
+    ]);
+  });
+});
+
+describe('Polish Interaksi & Grafik Kurva Spline', () => {
+  it('menaikkan pitch suara tetesan air secara harmonis dari 0% hingga 100%', () => {
+    const p0 = getGlugPitchMultiplier(0);
+    const p50 = getGlugPitchMultiplier(0.5);
+    const p100 = getGlugPitchMultiplier(1);
+
+    expect(p0).toBeCloseTo(1, 5);
+    expect(p50).toBeGreaterThan(p0);
+    expect(p100).toBeCloseTo(2, 5);
+    expect(getGlugPitchMultiplier(-0.2)).toBeCloseTo(1, 5);
+    expect(getGlugPitchMultiplier(1.5)).toBeCloseTo(2, 5);
+  });
+
+  it('menghasilkan path SVG kurva kubik monoton yang valid tanpa overshoot negatif', () => {
+    expect(buildMonotoneSplinePath([])).toBe('');
+    expect(buildMonotoneSplinePath([{ x: 10, y: 50 }])).toBe('M 10.00 50.00');
+
+    const path = buildMonotoneSplinePath([
+      { x: 0, y: 120 },
+      { x: 50, y: 40 },
+      { x: 100, y: 120 },
+      { x: 150, y: 120 },
+    ]);
+    expect(path.startsWith('M 0.00 120.00 C ')).toBe(true);
+    expect(path.split(' C ').length - 1).toBe(3);
+  });
+});
+
 

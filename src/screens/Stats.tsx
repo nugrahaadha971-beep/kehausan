@@ -28,13 +28,14 @@ import { useTetes } from '../state/TetesContext';
 import { getLocalDateKey } from '../lib/storage';
 import {
   analyzeDrySpellWindow,
+  buildMonotoneSplinePath,
   getLogEffectiveMl,
   getLogsForDate,
   getTotalMlForDate,
   getWeeklyDrinkDistribution,
 } from '../lib/hydration';
 import { DrinkType } from '../lib/types';
-import { soundEngine } from '../lib/sound';
+import { soundEngine, triggerLightTap } from '../lib/sound';
 
 const SHORT_DAYS_ID = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
 const FULL_DAYS_ID = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -83,6 +84,7 @@ export const Stats: React.FC = () => {
   const now = useMemo(() => new Date(), []);
   const [calendarMonthOffset, setCalendarMonthOffset] = useState(0);
   const [selectedDateKey, setSelectedDateKey] = useState<string>(todayKey);
+  const [selectedWeekIndex, setSelectedWeekIndex] = useState<number>(6);
 
   const goalMl = data.profile.goalMl;
 
@@ -115,6 +117,59 @@ export const Stats: React.FC = () => {
     }
     return items;
   }, [range, data.logs, goalMl, dailyTargetMl, todayKey, now]);
+
+  const weekSpline = useMemo(() => {
+    if (range !== 'week' || chartData.length === 0) return null;
+    const width = 360;
+    const height = 190;
+    const padLeft = 42;
+    const padRight = 18;
+    const padTop = 22;
+    const padBottom = 28;
+    const plotW = width - padLeft - padRight;
+    const plotH = height - padTop - padBottom;
+
+    const rawMax = Math.max(goalMl * 1.15, ...chartData.map((d) => d.ml), 500);
+    const niceMax = Math.ceil(rawMax / 500) * 500;
+    const bottomY = padTop + plotH;
+
+    const points = chartData.map((item, idx) => {
+      const ratioX = chartData.length > 1 ? idx / (chartData.length - 1) : 0.5;
+      const x = padLeft + ratioX * plotW;
+      const y = bottomY - (Math.max(0, item.ml) / niceMax) * plotH;
+      const [, m, d] = item.dateKey.split('-').map(Number);
+      const shortDate = `${d} ${MONTHS_ID[(m || 1) - 1]?.slice(0, 3) || ''}`;
+      return {
+        ...item,
+        idx,
+        x,
+        y,
+        shortDate,
+      };
+    });
+
+    const linePath = buildMonotoneSplinePath(points);
+    const first = points[0];
+    const last = points[points.length - 1];
+    const areaPath = `${linePath} L ${last.x.toFixed(2)} ${bottomY.toFixed(2)} L ${first.x.toFixed(2)} ${bottomY.toFixed(2)} Z`;
+    const goalY = bottomY - (Math.min(goalMl, niceMax) / niceMax) * plotH;
+    const midVal = Math.round(niceMax / 2);
+
+    return {
+      width,
+      height,
+      padLeft,
+      padRight,
+      padTop,
+      bottomY,
+      niceMax,
+      midVal,
+      goalY,
+      points,
+      linePath,
+      areaPath,
+    };
+  }, [range, chartData, goalMl]);
 
   // Ringkasan bulan ini & rata-rata
   const summary = useMemo(() => {
@@ -317,80 +372,311 @@ export const Stats: React.FC = () => {
         </div>
       </div>
 
-      {/* Grafik Batang Recharts */}
+      {/* Grafik Kurva Halus Mingguan / Batang Bulanan */}
       <div className="rounded-[20px] border-2 border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
           <span className="text-sm font-extrabold text-[#3C3C3C] dark:text-slate-100">
-            {range === 'week' ? '7 Hari Terakhir' : '30 Hari Terakhir'}
+            {range === 'week' ? 'Kurva 7 Hari Terakhir' : '30 Hari Terakhir'}
           </span>
           <span className="text-xs font-bold text-[#777777] dark:text-slate-400 tabular-nums">
             Target: {goalMl.toLocaleString('id-ID')} ml
           </span>
         </div>
 
-        <div className="h-52 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart
-              data={chartData}
-              margin={{ top: 10, right: 4, left: -20, bottom: 0 }}
-            >
-              <XAxis
-                dataKey="label"
-                tick={{ fontSize: 11, fontWeight: 700, fill: '#94A3B8' }}
-                axisLine={false}
-                tickLine={false}
-                interval={range === 'month' ? 4 : 0}
-              />
-              <YAxis
-                tick={{ fontSize: 10, fontWeight: 700, fill: '#94A3B8' }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <Tooltip
-                cursor={{ fill: 'rgba(28, 176, 246, 0.08)' }}
-                contentStyle={{
-                  borderRadius: '14px',
-                  border: '2px solid #E5E5E5',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                }}
-                formatter={(value: unknown) => [
-                  `${Number(value || 0).toLocaleString('id-ID')} ml`,
-                  'Total',
-                ]}
-              />
-              <ReferenceLine
-                y={goalMl}
-                stroke="#FF9600"
-                strokeDasharray="4 4"
-                strokeWidth={2}
-              />
-              <Bar
-                dataKey="ml"
-                radius={[8, 8, 4, 4]}
-                animationDuration={650}
-              >
-                {chartData.map((entry) => (
-                  <Cell
-                    key={entry.dateKey}
-                    fill={entry.reached ? '#58CC02' : '#7AD4FF'}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        {range === 'week' && weekSpline ? (
+          (() => {
+            const safeIdx = Math.max(
+              0,
+              Math.min(selectedWeekIndex, weekSpline.points.length - 1)
+            );
+            const activePt = weekSpline.points[safeIdx];
+            const remainingMl = Math.max(0, goalMl - activePt.ml);
 
-        <div className="mt-2 flex items-center justify-center gap-4 text-[11px] font-bold text-[#777777] dark:text-slate-400">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#58CC02]" />
-            Capai target
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-full bg-[#7AD4FF]" />
-            Di bawah target
-          </span>
-        </div>
+            return (
+              <div>
+                {/* Strip detail titik aktif */}
+                <div className="mb-2.5 flex items-center justify-between gap-2 rounded-[14px] border border-[#DCEEFF] dark:border-slate-700 bg-[#F4FAFF] dark:bg-slate-900/70 px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-extrabold text-[#777777] dark:text-slate-400">
+                      {activePt.label}, {activePt.shortDate}
+                      {activePt.dateKey === todayKey ? ' (Hari ini)' : ''}
+                    </div>
+                    <div className="text-base font-extrabold text-[#1899D6] dark:text-[#4CC5FF] tabular-nums leading-tight">
+                      {activePt.ml.toLocaleString('id-ID')} ml
+                    </div>
+                  </div>
+                  <span
+                    className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-extrabold tabular-nums ${
+                      activePt.reached
+                        ? 'bg-[#E8FDD8] dark:bg-emerald-950/60 text-[#3F9100] dark:text-[#86EFAC]'
+                        : activePt.ml > 0
+                          ? 'bg-[#DDF4FF] dark:bg-sky-950/60 text-[#1899D6] dark:text-[#7CE0FF]'
+                          : 'bg-slate-100 dark:bg-slate-800 text-[#777777] dark:text-slate-400'
+                    }`}
+                  >
+                    {activePt.reached ? (
+                      <>
+                        <Check className="w-3 h-3" />
+                        Target tercapai
+                      </>
+                    ) : activePt.ml > 0 ? (
+                      `Sisa ${remainingMl.toLocaleString('id-ID')} ml`
+                    ) : (
+                      'Belum ada catatan'
+                    )}
+                  </span>
+                </div>
+
+                {/* Grafik Area Kurva Halus SVG */}
+                <div className="w-full select-none">
+                  <svg
+                    viewBox={`0 0 ${weekSpline.width} ${weekSpline.height}`}
+                    className="w-full h-52 overflow-visible"
+                    role="img"
+                    aria-label="Grafik area kurva hidrasi 7 hari terakhir"
+                  >
+                    <defs>
+                      <linearGradient id="tetesSplineArea" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#1CB0F6" stopOpacity="0.34" />
+                        <stop offset="65%" stopColor="#4CC5FF" stopOpacity="0.12" />
+                        <stop offset="100%" stopColor="#1CB0F6" stopOpacity="0.01" />
+                      </linearGradient>
+                      <linearGradient id="tetesSplineStroke" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#4CC5FF" />
+                        <stop offset="55%" stopColor="#1CB0F6" />
+                        <stop offset="100%" stopColor="#0EA5E9" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* Garis kisi Y-axis */}
+                    {[
+                      { val: weekSpline.niceMax, y: weekSpline.padTop },
+                      {
+                        val: weekSpline.midVal,
+                        y: (weekSpline.padTop + weekSpline.bottomY) / 2,
+                      },
+                      { val: 0, y: weekSpline.bottomY },
+                    ].map((tick) => (
+                      <g key={tick.val}>
+                        <line
+                          x1={weekSpline.padLeft}
+                          y1={tick.y}
+                          x2={weekSpline.width - weekSpline.padRight}
+                          y2={tick.y}
+                          stroke="currentColor"
+                          className="text-slate-200 dark:text-slate-700/80"
+                          strokeWidth="1"
+                        />
+                        <text
+                          x={weekSpline.padLeft - 6}
+                          y={tick.y + 3.5}
+                          textAnchor="end"
+                          className="fill-[#94A3B8] text-[10px] font-bold tabular-nums"
+                        >
+                          {tick.val >= 1000
+                            ? `${(tick.val / 1000).toFixed(tick.val % 1000 === 0 ? 0 : 1)}L`
+                            : tick.val}
+                        </text>
+                      </g>
+                    ))}
+
+                    {/* Garis target harian */}
+                    <line
+                      x1={weekSpline.padLeft}
+                      y1={weekSpline.goalY}
+                      x2={weekSpline.width - weekSpline.padRight}
+                      y2={weekSpline.goalY}
+                      stroke="#FF9600"
+                      strokeDasharray="4 4"
+                      strokeWidth="1.75"
+                    />
+
+                    {/* Area gradasi bawah kurva */}
+                    <path d={weekSpline.areaPath} fill="url(#tetesSplineArea)" />
+
+                    {/* Garis kurva kubik halus */}
+                    <path
+                      d={weekSpline.linePath}
+                      fill="none"
+                      stroke="url(#tetesSplineStroke)"
+                      strokeWidth="3.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+
+                    {/* Garis vertikal titik aktif */}
+                    <line
+                      x1={activePt.x}
+                      y1={activePt.y}
+                      x2={activePt.x}
+                      y2={weekSpline.bottomY}
+                      stroke="#1CB0F6"
+                      strokeOpacity="0.45"
+                      strokeDasharray="3 3"
+                      strokeWidth="1.5"
+                    />
+
+                    {/* Titik interaktif setiap hari */}
+                    {weekSpline.points.map((pt) => {
+                      const isActive = pt.idx === safeIdx;
+                      const dotColor = pt.reached ? '#58CC02' : '#1CB0F6';
+                      return (
+                        <g
+                          key={pt.dateKey}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`${pt.label} ${pt.shortDate}: ${pt.ml} ml`}
+                          onClick={() => {
+                            triggerLightTap(data.settings.haptics);
+                            soundEngine.play('click', data.settings.sound);
+                            setSelectedWeekIndex(pt.idx);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              triggerLightTap(data.settings.haptics);
+                              soundEngine.play('click', data.settings.sound);
+                              setSelectedWeekIndex(pt.idx);
+                            }
+                          }}
+                          className="cursor-pointer focus:outline-none"
+                        >
+                          {/* Area sentuh lebar */}
+                          <circle cx={pt.x} cy={pt.y} r="18" fill="transparent" />
+
+                          {isActive && (
+                            <>
+                              <circle
+                                cx={pt.x}
+                                cy={pt.y}
+                                r="11"
+                                fill={dotColor}
+                                fillOpacity="0.2"
+                              />
+                              <circle
+                                cx={pt.x}
+                                cy={pt.y}
+                                r="7"
+                                fill="#FFFFFF"
+                                stroke={dotColor}
+                                strokeWidth="3"
+                              />
+                            </>
+                          )}
+
+                          {!isActive && (
+                            <circle
+                              cx={pt.x}
+                              cy={pt.y}
+                              r="4"
+                              fill="#FFFFFF"
+                              stroke={dotColor}
+                              strokeWidth="2.4"
+                            />
+                          )}
+
+                          <text
+                            x={pt.x}
+                            y={weekSpline.height - 6}
+                            textAnchor="middle"
+                            className={`text-[11px] font-extrabold ${
+                              isActive
+                                ? 'fill-[#1899D6] dark:fill-[#4CC5FF]'
+                                : 'fill-[#94A3B8]'
+                            }`}
+                          >
+                            {pt.label}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </div>
+
+                <div className="mt-1 flex flex-wrap items-center justify-center gap-4 text-[11px] font-bold text-[#777777] dark:text-slate-400">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-[#1CB0F6]" />
+                    Kurva hidrasi (ketuk titik)
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-[#58CC02]" />
+                    Capai target
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-0.5 w-3.5 border-t-2 border-dashed border-[#FF9600]" />
+                    Target harian
+                  </span>
+                </div>
+              </div>
+            );
+          })()
+        ) : (
+          <>
+            <div className="h-52 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={chartData}
+                  margin={{ top: 10, right: 4, left: -20, bottom: 0 }}
+                >
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fontSize: 11, fontWeight: 700, fill: '#94A3B8' }}
+                    axisLine={false}
+                    tickLine={false}
+                    interval={4}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10, fontWeight: 700, fill: '#94A3B8' }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip
+                    cursor={{ fill: 'rgba(28, 176, 246, 0.08)' }}
+                    contentStyle={{
+                      borderRadius: '14px',
+                      border: '2px solid #E5E5E5',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                    }}
+                    formatter={(value: unknown) => [
+                      `${Number(value || 0).toLocaleString('id-ID')} ml`,
+                      'Total',
+                    ]}
+                  />
+                  <ReferenceLine
+                    y={goalMl}
+                    stroke="#FF9600"
+                    strokeDasharray="4 4"
+                    strokeWidth={2}
+                  />
+                  <Bar
+                    dataKey="ml"
+                    radius={[8, 8, 4, 4]}
+                    animationDuration={650}
+                  >
+                    {chartData.map((entry) => (
+                      <Cell
+                        key={entry.dateKey}
+                        fill={entry.reached ? '#58CC02' : '#7AD4FF'}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="mt-2 flex items-center justify-center gap-4 text-[11px] font-bold text-[#777777] dark:text-slate-400">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full bg-[#58CC02]" />
+                Capai target
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full bg-[#7AD4FF]" />
+                Di bawah target
+              </span>
+            </div>
+          </>
+        )}
       </div>
 
       {/* 4 Kartu Ringkasan */}
@@ -643,29 +929,29 @@ export const Stats: React.FC = () => {
             {/* Legenda & Angka Rinci */}
             <div className="mt-3 grid grid-cols-2 gap-2.5">
               {weeklyDistribution.items.map((item) => {
-                const style = DRINK_BAR_COLORS[item.id];
-                return (
-                  <div
-                    key={item.id}
-                    className="flex items-center justify-between rounded-xl border border-[#EEF2F6] dark:border-slate-700 bg-[#F8FAFC] dark:bg-slate-900/50 px-2.5 py-2"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${style.dot}`} />
-                      <div className="min-w-0">
-                        <div className="text-xs font-extrabold text-[#3C3C3C] dark:text-slate-100 truncate">
-                          {item.label}
-                        </div>
-                        <div className="text-[10px] font-bold text-[#777777] dark:text-slate-400 tabular-nums">
-                          {item.rawMl.toLocaleString('id-ID')} ml
+                  const style = DRINK_BAR_COLORS[item.id];
+                  return (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between rounded-xl border border-[#EEF2F6] dark:border-slate-700 bg-[#F8FAFC] dark:bg-slate-900/50 px-2.5 py-2"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${style.dot}`} />
+                        <div className="min-w-0">
+                          <div className="text-xs font-extrabold text-[#3C3C3C] dark:text-slate-100 truncate">
+                            {item.label}
+                          </div>
+                          <div className="text-[10px] font-bold text-[#777777] dark:text-slate-400 tabular-nums">
+                            {item.rawMl.toLocaleString('id-ID')} ml
+                          </div>
                         </div>
                       </div>
+                      <span className={`text-xs font-extrabold tabular-nums shrink-0 ${style.text}`}>
+                        {item.percent}%
+                      </span>
                     </div>
-                    <span className={`text-xs font-extrabold tabular-nums shrink-0 ${style.text}`}>
-                      {item.percent}%
-                    </span>
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           </>
         )}

@@ -25,7 +25,16 @@ export type DropiMood =
   | 'wow'
   | 'drinking';
 
-export type DropiColor = 'blue' | 'teal' | 'green' | 'purple' | 'yellow' | 'pink';
+export type DropiColor =
+  | 'blue'
+  | 'teal'
+  | 'green'
+  | 'purple'
+  | 'yellow'
+  | 'pink'
+  | 'aqua_neon'
+  | 'royal_gold'
+  | 'aurora_berry';
 export type DropiAccessory = 'none' | 'hat' | 'glasses' | 'crown';
 
 export interface DropiTheme {
@@ -42,6 +51,8 @@ export interface DropiTheme {
   ground: string;
   /** Warna lingkaran latar di belakang maskot (dipakai di Profil/Home) */
   ring: string;
+  /** Penanda koleksi Edisi Terbatas */
+  limited?: boolean;
 }
 
 /** Sumber tunggal daftar warna. Pakai ini juga di layar Profil agar id-nya sama persis. */
@@ -100,6 +111,36 @@ export const DROPI_COLORS: Record<DropiColor, DropiTheme> = {
     ground: 'rgba(217, 79, 79, 0.28)',
     ring: '#FFE1E1',
   },
+  aqua_neon: {
+    label: 'Aqua Neon',
+    light: '#A5F3FC',
+    base: '#00E5C3',
+    dark: '#0284C7',
+    inset: 'rgba(6, 78, 99, 0.4)',
+    ground: 'rgba(0, 212, 180, 0.34)',
+    ring: '#CCFBF1',
+    limited: true,
+  },
+  royal_gold: {
+    label: 'Royal Gold',
+    light: '#FFF3B0',
+    base: '#F5B700',
+    dark: '#B45309',
+    inset: 'rgba(120, 53, 15, 0.42)',
+    ground: 'rgba(217, 119, 6, 0.34)',
+    ring: '#FEF3C7',
+    limited: true,
+  },
+  aurora_berry: {
+    label: 'Aurora Berry',
+    light: '#F5D0FE',
+    base: '#D946EF',
+    dark: '#7E22CE',
+    inset: 'rgba(88, 28, 135, 0.42)',
+    ground: 'rgba(168, 85, 247, 0.34)',
+    ring: '#FAE8FF',
+    limited: true,
+  },
 };
 
 /** Sumber tunggal daftar aksesori untuk layar Profil. */
@@ -123,6 +164,16 @@ const COLOR_ALIASES: Record<string, DropiColor> = {
   rose: 'pink',
   red: 'pink',
   orange: 'yellow',
+  'aqua neon': 'aqua_neon',
+  aquaneon: 'aqua_neon',
+  'aqua-neon': 'aqua_neon',
+  'royal gold': 'royal_gold',
+  royalgold: 'royal_gold',
+  'royal-gold': 'royal_gold',
+  gold: 'royal_gold',
+  'aurora berry': 'aurora_berry',
+  auroraberry: 'aurora_berry',
+  'aurora-berry': 'aurora_berry',
 };
 
 const ACCESSORY_ALIASES: Record<string, DropiAccessory> = {

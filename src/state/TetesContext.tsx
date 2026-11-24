@@ -569,7 +569,7 @@ export const TetesProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const logWater = useCallback(
     (ml: number, drinkType: DrinkType = 'water'): DrinkEventFeedback => {
-      const rawAmountMl = Math.max(10, Math.min(2000, Math.round(ml)));
+      const rawAmountMl = Math.max(1, Math.min(2000, Math.round(ml)));
       const effectiveMl = calculateEffectiveMl(rawAmountMl, drinkType);
       const nowDate = new Date();
       const key = getLocalDateKey(nowDate);
@@ -678,7 +678,8 @@ export const TetesProvider: React.FC<{ children: React.ReactNode }> = ({
         });
       }
 
-      soundEngine.play('glug', data.settings.sound);
+      const progressRatio = targetMl > 0 ? Math.min(1, nextTotal / targetMl) : 0;
+      soundEngine.play('glug', data.settings.sound, { progressRatio });
       triggerHaptic(data.settings.haptics, 30);
 
       const leveledUpTo =

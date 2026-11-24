@@ -1,5 +1,5 @@
 import React from 'react';
-import { soundEngine } from '../lib/sound';
+import { soundEngine, triggerLightTap } from '../lib/sound';
 import { useTetes } from '../state/TetesContext';
 
 type ButtonVariant = 'water' | 'mint' | 'sun' | 'berry' | 'coral' | 'white' | 'ghost';
@@ -48,8 +48,11 @@ export const Button3D: React.FC<Button3DProps> = ({
   const { data } = useTetes();
 
   const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
-    if (!disabled && !silent) {
-      soundEngine.play('click', data.settings.sound);
+    if (!disabled) {
+      triggerLightTap(data.settings.haptics);
+      if (!silent) {
+        soundEngine.play('click', data.settings.sound);
+      }
     }
     onClick?.(e);
   };

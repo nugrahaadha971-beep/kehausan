@@ -194,6 +194,9 @@ describe('streak.ts — kenaikan, anti-dobel, rollback hapus, reset, dan pelindu
       purple: 60,
       yellow: 60,
       pink: 80,
+      aqua_neon: 160,
+      royal_gold: 220,
+      aurora_berry: 260,
     });
     expect(DROPI_ACCESSORY_PRICES).toEqual({
       none: 0,

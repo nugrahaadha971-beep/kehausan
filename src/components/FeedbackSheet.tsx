@@ -109,9 +109,10 @@ export const FeedbackSheet: React.FC<FeedbackSheetProps> = ({
                     const rawMl = getLogRawAmountMl(feedback.log);
                     const effMl = getLogEffectiveMl(feedback.log);
                     const opt = getDrinkTypeOption(dType);
-                    return dType === 'water'
-                      ? `+${effMl} ml tercatat · +${feedback.xpEarned} XP`
-                      : `+${rawMl} ml ${opt.shortLabel} (${effMl} ml efektif) · +${feedback.xpEarned} XP`;
+                    if (dType === 'water') {
+                      return `+${effMl} ml tercatat · +${feedback.xpEarned} XP`;
+                    }
+                    return `+${rawMl} ml ${opt.shortLabel} (${effMl} ml efektif) · +${feedback.xpEarned} XP`;
                   })()}
                   {feedback.justHitGoal
                     ? ` · Target tercapai!${feedback.goalBonusDrops > 0 ? ` (+${feedback.goalBonusDrops} Koin)` : ''}`

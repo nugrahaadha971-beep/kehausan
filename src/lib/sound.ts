@@ -1,6 +1,24 @@
 // Efek suara sintetis berbasis Web Audio API (tanpa file audio eksternal)
 type SoundName = 'click' | 'glug' | 'ding' | 'tada' | 'pop';
 
+export interface SoundPlayOptions {
+  /** Rasio progres target harian 0..1 untuk menaikkan pitch tetesan secara harmonis */
+  progressRatio?: number;
+}
+
+const PENTATONIC_SEMITONES = [0, 2, 4, 7, 9, 12] as const;
+
+export function getGlugPitchMultiplier(progressRatio = 0): number {
+  const safeRatio = Number.isFinite(progressRatio)
+    ? Math.max(0, Math.min(1, progressRatio))
+    : 0;
+  const idx = Math.min(
+    PENTATONIC_SEMITONES.length - 1,
+    Math.floor(safeRatio * (PENTATONIC_SEMITONES.length - 0.001))
+  );
+  return Math.pow(2, PENTATONIC_SEMITONES[idx] / 12);
+}
+
 class SoundEngine {
   private ctx: AudioContext | null = null;
   private unlocked = false;
@@ -29,7 +47,7 @@ class SoundEngine {
     }
   }
 
-  public play(name: SoundName, enabled: boolean): void {
+  public play(name: SoundName, enabled: boolean, options?: SoundPlayOptions): void {
     if (!enabled || !this.unlocked) return;
     if (
       typeof window !== 'undefined' &&
@@ -61,13 +79,14 @@ class SoundEngine {
       }
 
       case 'glug': {
-        // Dua gelembung air "glek-glek" lembut
+        // Dua gelembung air "glek-glek" dengan pitch harmonis mengikuti progres 0%–100%
+        const pitchMult = getGlugPitchMultiplier(options?.progressRatio ?? 0);
         [0, 0.11].forEach((offset, idx) => {
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.type = 'sine';
-          const startFreq = idx === 0 ? 280 : 340;
-          const peakFreq = idx === 0 ? 540 : 660;
+          const startFreq = (idx === 0 ? 280 : 340) * pitchMult;
+          const peakFreq = (idx === 0 ? 540 : 660) * pitchMult;
           osc.frequency.setValueAtTime(startFreq, now + offset);
           osc.frequency.exponentialRampToValueAtTime(peakFreq, now + offset + 0.08);
           gain.gain.setValueAtTime(0.001, now + offset);
@@ -150,6 +169,24 @@ export function triggerHaptic(enabled: boolean, pattern: number | number[] = 30)
   if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
     try {
       navigator.vibrate(pattern);
+    } catch {
+      // Abaikan jika browser memblokir vibrate
+    }
+  }
+}
+
+export function triggerLightTap(enabled = true): void {
+  if (!enabled) return;
+  if (
+    typeof window !== 'undefined' &&
+    window.matchMedia &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  ) {
+    return;
+  }
+  if (typeof navigator !== 'undefined') {
+    try {
+      navigator.vibrate?.(12);
     } catch {
       // Abaikan jika browser memblokir vibrate
     }

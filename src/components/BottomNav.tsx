@@ -24,7 +24,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onSelect }) => 
   return (
     <nav
       aria-label="Navigasi utama"
-      className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] z-30 border-t-2 border-[#E5E5E5] dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md pb-[env(safe-area-inset-bottom)]"
+      className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] z-30 border-t border-[#CBEBFF]/80 dark:border-slate-800 bg-white/82 dark:bg-slate-900/82 backdrop-blur-xl ring-1 ring-inset ring-white/50 dark:ring-white/10 shadow-[0_-12px_32px_-12px_rgba(14,165,233,0.22)] dark:shadow-[0_-12px_32px_-12px_rgba(2,6,23,0.75)] pb-[env(safe-area-inset-bottom)]"
     >
       <div className="grid grid-cols-4 h-16 px-2">
         {NAV_ITEMS.map(({ id, label, Icon }) => {

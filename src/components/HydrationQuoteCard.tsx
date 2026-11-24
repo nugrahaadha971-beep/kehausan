@@ -15,7 +15,7 @@ export const HydrationQuoteCard: React.FC = () => {
       transition={{ duration: 0.25, ease: 'easeOut' }}
       className="px-4 mt-5"
     >
-      <div className="rounded-[20px] border-2 border-[#BCE8FF] dark:border-sky-800/70 bg-gradient-to-br from-[#F2FAFF] to-[#E6F6FF] dark:from-slate-800 dark:to-slate-800/80 p-4 shadow-sm">
+      <div className="rounded-[20px] border-2 border-[#BCE8FF] dark:border-sky-800/70 bg-gradient-to-br from-[#F2FAFF] to-[#E6F6FF] dark:from-slate-800 dark:to-slate-800/80 p-4 ring-1 ring-inset ring-white/50 dark:ring-white/10 shadow-[0_12px_28px_-12px_rgba(28,176,246,0.24)] dark:shadow-[0_12px_28px_-12px_rgba(2,6,23,0.55)]">
         <div className="flex items-center justify-between gap-2 mb-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#1CB0F6] text-white shadow-xs">

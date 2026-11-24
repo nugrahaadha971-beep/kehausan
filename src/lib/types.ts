@@ -13,7 +13,10 @@ export type DropiColorId =
   | 'green'
   | 'purple'
   | 'yellow'
-  | 'pink';
+  | 'pink'
+  | 'aqua_neon'
+  | 'royal_gold'
+  | 'aurora_berry';
 
 export type DropiAccessoryId = 'none' | 'hat' | 'glasses' | 'crown';
 

@@ -8,9 +8,11 @@ import {
   Droplet,
   Flame,
   Moon,
+  Pencil,
   Plus,
   RotateCcw,
   Shield,
+  ShoppingBag,
   Sparkles,
   Star,
   Trash2,
@@ -20,7 +22,8 @@ import {
 import { DropiMood, getDropiTheme } from '../components/DropiMascot';
 import { MyDropi } from '../components/MyDropi';
 import { SpeechBubble } from '../components/SpeechBubble';
-import { WaterWave } from '../components/WaterWave';
+import { getWaterWavePalette, WaterWave } from '../components/WaterWave';
+import { AnimatedNumber } from '../components/AnimatedNumber';
 import { Burst } from '../components/Burst';
 import { Button3D } from '../components/Button3D';
 import { ProgressBar } from '../components/ProgressBar';
@@ -34,6 +37,7 @@ import {
   calculateEffectiveMl,
   DRINK_TYPE_OPTIONS,
   formatTimeShort,
+  getAffordableShopItems,
   getDrinkReactionMessage,
   getDrinkTypeOption,
   getLogDrinkType,
@@ -43,7 +47,7 @@ import {
 import { parseTimeToMinutes } from '../lib/storage';
 import { DAILY_QUEST_DEFS } from '../lib/quests';
 import { getDropiMood } from '../lib/dropiMood';
-import { soundEngine } from '../lib/sound';
+import { soundEngine, triggerLightTap } from '../lib/sound';
 
 const QUICK_AMOUNTS = [100, 250, 500];
 
@@ -82,6 +86,7 @@ export const Home: React.FC = () => {
     claimQuest,
     toggleDailyBooster,
     setScreen,
+    setActiveTab,
   } = useTetes();
 
   const reduceMotion = useReducedMotion();
@@ -104,8 +109,6 @@ export const Home: React.FC = () => {
   } | null>(null);
 
   const [justDrank, setJustDrank] = useState(false);
-  const [displayMl, setDisplayMl] = useState(todayTotalMl);
-  const prevMlRef = useRef(todayTotalMl);
 
   const [floatingMl, setFloatingMl] = useState<{ id: string; ml: number } | null>(null);
   const [flyingXpKey, setFlyingXpKey] = useState<string | null>(null);
@@ -113,9 +116,55 @@ export const Home: React.FC = () => {
   const [burstTrigger, setBurstTrigger] = useState(0);
   const [showSheet, setShowSheet] = useState(false);
 
-  // Bottom sheet input ml kustom
+  // Bottom sheet input ml kustom (slider + ketik manual presisi)
   const [showCustomSheet, setShowCustomSheet] = useState(false);
   const [customMl, setCustomMl] = useState(300);
+  const [customMlInput, setCustomMlInput] = useState('300');
+  const [modalDrinkType, setModalDrinkType] = useState<DrinkType>('water');
+  const manualMlInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Pengingat item toko Dropi yang sudah mampu dibeli dengan Koin Tetes
+  const affordableShopItems = useMemo(
+    () =>
+      getAffordableShopItems({
+        drops: data.drops,
+        unlockedColors: data.unlockedColors,
+        unlockedAccessories: data.unlockedAccessories,
+        streakFreezes: data.streakFreezes,
+      }),
+    [data.drops, data.unlockedColors, data.unlockedAccessories, data.streakFreezes]
+  );
+
+  const affordableShopKey = useMemo(
+    () =>
+      affordableShopItems.length > 0
+        ? `${data.drops}:${affordableShopItems.map((i) => i.id).join(',')}`
+        : '',
+    [data.drops, affordableShopItems]
+  );
+
+  const [dismissedShopKey, setDismissedShopKey] = useState<string>('');
+  const showShopReminderBanner =
+    affordableShopItems.length > 0 && dismissedShopKey !== affordableShopKey;
+
+  useEffect(() => {
+    if (!affordableShopKey || !data.settings.notifications) return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+      return;
+    }
+    try {
+      const storageKey = 'tetes:lastShopNotifKey';
+      if (window.localStorage.getItem(storageKey) === affordableShopKey) return;
+      const firstItem = affordableShopItems[0];
+      new Notification('Koin Tetes Cukup untuk Belanja!', {
+        body: `Kamu punya ${data.drops} Koin Tetes — cukup untuk membuka ${firstItem.label} di Toko Dropi!`,
+        icon: './pwa-192x192.png',
+      });
+      window.localStorage.setItem(storageKey, affordableShopKey);
+    } catch {
+      // Abaikan jika browser membatasi Notification atau storage
+    }
+  }, [affordableShopKey, affordableShopItems, data.drops, data.settings.notifications]);
 
   // Hapus & Urungkan (4 detik)
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -135,34 +184,10 @@ export const Home: React.FC = () => {
     };
   }, []);
 
-  // Count-up angka ml halus di tengah wadah air
-  useEffect(() => {
-    const startVal = prevMlRef.current;
-    const endVal = todayTotalMl;
-    prevMlRef.current = todayTotalMl;
-
-    if (reduceMotion || startVal === endVal) {
-      setDisplayMl(endVal);
-      return;
-    }
-
-    const duration = 520;
-    const startTime = performance.now();
-    let rafId = 0;
-
-    const tick = (now: number) => {
-      const elapsed = now - startTime;
-      const t = Math.min(1, elapsed / duration);
-      const eased = 1 - Math.pow(1 - t, 3);
-      setDisplayMl(Math.round(startVal + (endVal - startVal) * eased));
-      if (t < 1) rafId = requestAnimationFrame(tick);
-    };
-
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [todayTotalMl, reduceMotion]);
-
-  const commitDrink = (ml: number, drinkType: DrinkType = selectedDrinkType) => {
+  const commitDrink = (
+    ml: number,
+    drinkType: DrinkType = selectedDrinkType
+  ) => {
     setWindDownWarning(null);
     setRapidIntakeWarning(null);
     setPacingReminder(null);
@@ -238,7 +263,10 @@ export const Home: React.FC = () => {
     commitDrink(ml, drinkType);
   };
 
-  const handleDrink = (ml: number, drinkType: DrinkType = selectedDrinkType) => {
+  const handleDrink = (
+    ml: number,
+    drinkType: DrinkType = selectedDrinkType
+  ) => {
     if (isWindDown && ml >= 300) {
       soundEngine.play('click', data.settings.sound);
       setWindDownWarning({ ml, drinkType });
@@ -372,15 +400,25 @@ export const Home: React.FC = () => {
 
   const boosterBonusMl = dailyTargetMl - data.profile.goalMl;
 
+  const lastDrinkType: DrinkType = useMemo(
+    () => (todayLogs.length > 0 ? getLogDrinkType(todayLogs[0]) : 'water'),
+    [todayLogs]
+  );
+
+  const wavePalette = useMemo(
+    () => getWaterWavePalette(lastDrinkType),
+    [lastDrinkType]
+  );
+
   return (
     <div className="pb-24">
       {/* Header sapaan + Streak + Pelindung + Koin Tetes + XP */}
-      <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-2 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-3 sm:px-4 py-2.5 border-b border-[#E5E5E5]/70 dark:border-slate-800">
+      <header className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-2 bg-white/85 dark:bg-slate-900/85 backdrop-blur-xl px-3 sm:px-4 py-2.5 border-b border-[#CBEBFF]/70 dark:border-slate-800 ring-1 ring-inset ring-white/50 dark:ring-white/10 shadow-[0_8px_24px_-12px_rgba(14,165,233,0.18)] dark:shadow-[0_8px_24px_-12px_rgba(2,6,23,0.65)]">
         <div className="min-w-0">
           <h1 className="font-display text-base sm:text-lg font-extrabold text-[#3C3C3C] dark:text-white truncate">
             Halo, {data.profile.name || 'Teman'}!
           </h1>
-          <p className="text-[11px] font-bold text-[#777777] dark:text-slate-400 truncate">
+          <p className="text-[11px] font-bold text-[#777777] dark:text-slate-400 truncate tabular-nums">
             Lv {data.progress.level} · Target {dailyTargetMl.toLocaleString('id-ID')} ml
             {boosterBonusMl > 0 ? ` (+${boosterBonusMl})` : ''}
           </p>
@@ -416,15 +454,31 @@ export const Home: React.FC = () => {
             <span className="tabular-nums">{data.streakFreezes}</span>
           </button>
 
-          {/* Chip Koin Tetes */}
-          <div
-            title={`${data.drops} Koin Tetes`}
+          {/* Chip Saldo Koin Tetes (Menonjol & interaktif ke Toko Dropi) */}
+          <button
+            type="button"
+            onClick={() => {
+              soundEngine.play('click', data.settings.sound);
+              setActiveTab('profile');
+            }}
+            title={`Saldo ${data.drops} Koin Tetes — ketuk untuk buka Toko Dropi`}
             aria-label={`Saldo ${data.drops} Koin Tetes`}
-            className="min-h-[34px] inline-flex items-center gap-1 rounded-full bg-[#E6FFFA] dark:bg-teal-950/60 border border-[#8CE8D8] dark:border-teal-700/60 px-2 py-1 text-xs font-extrabold text-[#0B8770] dark:text-[#5EEAD4]"
+            className="relative min-h-[36px] inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-[#14B8A6] to-[#0D9488] border-2 border-[#0F766E] px-2.5 py-1 text-xs font-extrabold text-white shadow-sm cursor-pointer active:scale-95 transition-transform"
           >
-            <Coins className="w-3.5 h-3.5 text-[#14B8A6]" />
-            <span className="tabular-nums">{data.drops}</span>
-          </div>
+            <Coins className="w-4 h-4 text-[#FEF08A]" />
+            <span className="tabular-nums">{data.drops.toLocaleString('id-ID')}</span>
+            <span className="hidden xs:inline text-[10px] font-bold text-[#CCFBF1]">
+              Koin
+            </span>
+            {affordableShopItems.length > 0 && (
+              <span
+                aria-hidden="true"
+                className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#FFC800] ring-2 ring-white dark:ring-slate-900"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-[#9A3412]" />
+              </span>
+            )}
+          </button>
 
           {/* Chip XP */}
           <div
@@ -438,6 +492,58 @@ export const Home: React.FC = () => {
       </header>
 
       <OfflineBanner />
+
+      {/* Pengingat Notifikasi Item Toko Dropi yang Mampu Dibeli */}
+      <AnimatePresence>
+        {showShopReminderBanner && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            role="status"
+            className="mx-4 mt-3 flex items-center justify-between gap-2.5 rounded-[18px] border-2 border-[#14B8A6] bg-[#F0FDFA] dark:bg-teal-950/50 px-3.5 py-2.5 shadow-xs"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#14B8A6] text-white">
+                <ShoppingBag className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-extrabold text-[#0F766E] dark:text-[#5EEAD4]">
+                  Koin Tetes cukup untuk belanja!
+                </div>
+                <p className="text-[11px] font-bold text-[#115E59] dark:text-teal-200 leading-snug">
+                  Saldo {data.drops.toLocaleString('id-ID')} koin bisa membuka{' '}
+                  <strong>{affordableShopItems[0].label}</strong>
+                  {affordableShopItems.length > 1
+                    ? ` +${affordableShopItems.length - 1} item lainnya`
+                    : ''}
+                  .
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.play('click', data.settings.sound);
+                  setActiveTab('profile');
+                }}
+                className="min-h-[34px] rounded-xl bg-[#14B8A6] px-2.5 py-1 text-[11px] font-extrabold text-white cursor-pointer active:scale-95 whitespace-nowrap"
+              >
+                Buka Toko
+              </button>
+              <button
+                type="button"
+                aria-label="Tutup pengingat toko"
+                onClick={() => setDismissedShopKey(affordableShopKey)}
+                className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-full text-[#0F766E] dark:text-[#5EEAD4] hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Info Toast/Banner saat Pelindung Streak menyelamatkan streak */}
       <AnimatePresence>
@@ -552,9 +658,9 @@ export const Home: React.FC = () => {
           <div
             role="img"
             aria-label={`Wadah air terisi ${todayPercent} persen, ${todayTotalMl} dari ${dailyTargetMl} mililiter`}
-            className="relative w-48 h-60 rounded-[36px] overflow-hidden border-4 border-[#BAE6FD] dark:border-slate-700 bg-[#EBF8FF] dark:bg-slate-800 shadow-inner"
+            className={`relative w-48 h-60 rounded-[36px] overflow-hidden border-4 transition-colors duration-500 ring-1 ring-inset ring-white/50 dark:ring-white/10 ${wavePalette.vesselClass} ${wavePalette.vesselShadow}`}
           >
-            <WaterWave level={waterLevel} />
+            <WaterWave level={waterLevel} drinkType={lastDrinkType} />
 
             {/* Highlight kaca vertikal di sisi kiri */}
             <div
@@ -562,14 +668,20 @@ export const Home: React.FC = () => {
               className="pointer-events-none absolute top-4 left-3.5 bottom-6 w-2 rounded-full bg-white/35"
             />
 
+            {/* Highlight refleksi atas wadah */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-4 top-1.5 h-3 rounded-full bg-white/30 dark:bg-white/10 blur-[1px]"
+            />
+
             {/* Angka progres di tengah */}
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-3">
-              <div className="rounded-[20px] bg-white/88 dark:bg-slate-900/85 backdrop-blur-sm px-3.5 py-2 text-center shadow-sm border border-white/60 dark:border-slate-700/80">
+              <div className="rounded-[20px] bg-white/88 dark:bg-slate-900/85 backdrop-blur-md px-3.5 py-2 text-center border border-white/70 dark:border-slate-700/80 ring-1 ring-inset ring-white/50 dark:ring-white/10 shadow-[0_10px_24px_-8px_rgba(14,165,233,0.24)] dark:shadow-[0_10px_24px_-8px_rgba(2,6,23,0.65)]">
                 <div className="font-display text-3xl font-extrabold leading-none text-[#1899D6] dark:text-[#4CC5FF] tabular-nums">
-                  {todayPercent}%
+                  <AnimatedNumber value={todayPercent} durationMs={480} />%
                 </div>
                 <div className="mt-1 text-xs font-extrabold text-[#3C3C3C] dark:text-slate-100 tabular-nums">
-                  {displayMl.toLocaleString('id-ID')} /{' '}
+                  <AnimatedNumber value={todayTotalMl} durationMs={560} /> /{' '}
                   {dailyTargetMl.toLocaleString('id-ID')} ml
                 </div>
               </div>
@@ -660,6 +772,7 @@ export const Home: React.FC = () => {
                 role="radio"
                 aria-checked={active}
                 onClick={() => {
+                  triggerLightTap(data.settings.haptics);
                   soundEngine.play('click', data.settings.sound);
                   setSelectedDrinkType(opt.id);
                 }}
@@ -712,7 +825,10 @@ export const Home: React.FC = () => {
             <button
               key={amt}
               type="button"
-              onClick={() => handleDrink(amt, selectedDrinkType)}
+              onClick={() => {
+                triggerLightTap(data.settings.haptics);
+                handleDrink(amt, selectedDrinkType);
+              }}
               className="min-h-[44px] rounded-[14px] border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#D5D5D5] dark:border-b-slate-800 bg-white dark:bg-slate-800 px-1 text-xs sm:text-sm font-extrabold text-[#1CB0F6] dark:text-[#4CC5FF] hover:bg-[#F2FAFF] dark:hover:bg-slate-700 active:border-b-2 active:translate-y-[2px] transition-all cursor-pointer tabular-nums whitespace-nowrap"
             >
               +{amt}
@@ -721,7 +837,10 @@ export const Home: React.FC = () => {
           <button
             type="button"
             onClick={() => {
+              triggerLightTap(data.settings.haptics);
               soundEngine.play('click', data.settings.sound);
+              setModalDrinkType(selectedDrinkType);
+              setCustomMlInput(String(customMl));
               setShowCustomSheet(true);
             }}
             className="min-h-[44px] inline-flex items-center justify-center gap-0.5 sm:gap-1 rounded-[14px] border-2 border-[#E5E5E5] dark:border-slate-700 border-b-4 border-b-[#D5D5D5] dark:border-b-slate-800 bg-white dark:bg-slate-800 px-1 text-xs sm:text-sm font-extrabold text-[#777777] dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 active:border-b-2 active:translate-y-[2px] transition-all cursor-pointer whitespace-nowrap"
@@ -762,7 +881,7 @@ export const Home: React.FC = () => {
             return (
               <div
                 key={def.id}
-                className="rounded-[20px] border-2 border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 p-3.5"
+                className="rounded-[20px] border-2 border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 p-3.5 ring-1 ring-inset ring-white/50 dark:ring-white/10 shadow-[0_10px_24px_-12px_rgba(14,165,233,0.18)] dark:shadow-[0_10px_24px_-12px_rgba(2,6,23,0.55)]"
               >
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div>
@@ -821,14 +940,14 @@ export const Home: React.FC = () => {
         </div>
 
         {todayLogs.length === 0 ? (
-          <div className="flex items-center gap-3 rounded-[20px] border-2 border-dashed border-[#E5E5E5] dark:border-slate-700 bg-[#F7FAFC] dark:bg-slate-800/50 p-4">
+          <div className="flex items-center gap-3 rounded-[20px] border-2 border-dashed border-[#CBEBFF] dark:border-slate-700 bg-[#F7FAFC] dark:bg-slate-800/50 p-4 ring-1 ring-inset ring-white/50 dark:ring-white/10 shadow-[0_10px_24px_-12px_rgba(14,165,233,0.14)] dark:shadow-[0_10px_24px_-12px_rgba(2,6,23,0.45)]">
             <MyDropi mood="happy" size={58} />
             <p className="text-sm font-bold text-[#777777] dark:text-slate-300">
               Belum ada catatan hari ini. Ketuk tombol biru di atas saat kamu minum ya!
             </p>
           </div>
         ) : (
-          <div className="rounded-[20px] border-2 border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 divide-y divide-[#F0F0F0] dark:divide-slate-700 overflow-hidden">
+          <div className="rounded-[20px] border-2 border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 divide-y divide-[#F0F0F0] dark:divide-slate-700 overflow-hidden ring-1 ring-inset ring-white/50 dark:ring-white/10 shadow-[0_12px_28px_-12px_rgba(14,165,233,0.18)] dark:shadow-[0_12px_28px_-12px_rgba(2,6,23,0.55)]">
             {todayLogs.map((log, index) => {
               const confirming = confirmDeleteId === log.id;
               const dType = getLogDrinkType(log);
@@ -925,113 +1044,178 @@ export const Home: React.FC = () => {
 
       {/* Bottom Sheet Input ml Kustom */}
       <AnimatePresence>
-        {showCustomSheet && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-[2px]">
-            <motion.div
-              initial={reduceMotion ? { opacity: 0 } : { y: '100%' }}
-              animate={reduceMotion ? { opacity: 1 } : { y: 0 }}
-              exit={reduceMotion ? { opacity: 0 } : { y: '100%' }}
-              transition={{ type: 'spring', stiffness: 320, damping: 30 }}
-              className="w-full max-w-[430px] rounded-t-[24px] bg-white dark:bg-slate-900 px-5 pt-3 pb-7 shadow-2xl border-t-2 border-[#E5E5E5] dark:border-slate-700"
-              role="dialog"
-              aria-label="Catat jumlah air kustom"
-            >
-              <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-[#E5E5E5] dark:bg-slate-700" />
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-display text-xl font-extrabold text-[#3C3C3C] dark:text-white">
-                  Jumlah Air Kustom
-                </h3>
-                <button
-                  type="button"
-                  aria-label="Tutup"
-                  onClick={() => setShowCustomSheet(false)}
-                  className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+        {showCustomSheet && (() => {
+          const parsedInput = parseInt(customMlInput, 10);
+          const safeCustomMl =
+            customMlInput !== '' && Number.isFinite(parsedInput)
+              ? Math.max(1, Math.min(2000, parsedInput))
+              : Math.max(1, Math.min(2000, customMl));
+          const sliderValue = Math.min(1000, Math.max(50, safeCustomMl));
+          const modalOpt = getDrinkTypeOption(modalDrinkType);
+          const modalEffectiveMl = calculateEffectiveMl(safeCustomMl, modalDrinkType);
 
-              <div className="mb-4">
-                <div className="text-xs font-extrabold text-[#777777] dark:text-slate-400 mb-2">
-                  Pilih Jenis Minuman
+          return (
+            <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-[2px]">
+              <motion.div
+                initial={reduceMotion ? { opacity: 0 } : { y: '100%' }}
+                animate={reduceMotion ? { opacity: 1 } : { y: 0 }}
+                exit={reduceMotion ? { opacity: 0 } : { y: '100%' }}
+                transition={{ type: 'spring', stiffness: 320, damping: 30 }}
+                className="w-full max-w-[430px] max-h-[90dvh] overflow-y-auto rounded-t-[24px] bg-white dark:bg-slate-900 px-5 pt-3 pb-7 shadow-2xl border-t-2 border-[#E5E5E5] dark:border-slate-700"
+                role="dialog"
+                aria-label="Catat jumlah air kustom"
+              >
+                <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-[#E5E5E5] dark:bg-slate-700" />
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-display text-xl font-extrabold text-[#3C3C3C] dark:text-white">
+                    Jumlah Air Kustom
+                  </h3>
+                  <button
+                    type="button"
+                    aria-label="Tutup"
+                    onClick={() => setShowCustomSheet(false)}
+                    className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
                 </div>
-                <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
-                  {DRINK_TYPE_OPTIONS.map((opt) => {
-                    const active = selectedDrinkType === opt.id;
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => {
-                          soundEngine.play('click', data.settings.sound);
-                          setSelectedDrinkType(opt.id);
-                        }}
-                        className={`min-h-[52px] flex flex-col items-center justify-center rounded-[14px] border-2 px-1 py-1.5 text-center transition-all cursor-pointer ${
-                          active
-                            ? 'border-[#1CB0F6] bg-[#DDF4FF] dark:bg-[#0C2D48] text-[#1899D6] dark:text-[#7CE0FF]'
-                            : 'border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 text-[#666666] dark:text-slate-300'
-                        }`}
-                      >
-                        {renderDrinkIcon(opt.id, 'w-4 h-4 shrink-0')}
-                        <span className="mt-0.5 text-[11px] font-extrabold leading-tight truncate max-w-full">
-                          {opt.shortLabel}
-                        </span>
-                        <span className="text-[10px] font-bold opacity-80 tabular-nums">
-                          {opt.percentLabel}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
 
-              <div className="rounded-[20px] bg-[#F7FAFC] dark:bg-slate-800 p-5 text-center mb-4">
-                <div className="font-display text-4xl font-extrabold text-[#1CB0F6] tabular-nums">
-                  {customMl} ml
+                <div className="mb-4">
+                  <div className="text-xs font-extrabold text-[#777777] dark:text-slate-400 mb-2">
+                    Pilih Jenis Minuman
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {DRINK_TYPE_OPTIONS.map((opt) => {
+                      const active = modalDrinkType === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => {
+                            soundEngine.play('click', data.settings.sound);
+                            setModalDrinkType(opt.id);
+                          }}
+                          className={`min-h-[54px] flex flex-col items-center justify-center rounded-[14px] border-2 px-1 py-1.5 text-center transition-all cursor-pointer ${
+                            active
+                              ? 'border-[#1CB0F6] bg-[#DDF4FF] dark:bg-[#0C2D48] text-[#1899D6] dark:text-[#7CE0FF]'
+                              : 'border-[#E5E5E5] dark:border-slate-700 bg-white dark:bg-slate-800 text-[#666666] dark:text-slate-300'
+                          }`}
+                        >
+                          {renderDrinkIcon(opt.id, 'w-4 h-4 shrink-0')}
+                          <span className="mt-0.5 text-[11px] font-extrabold leading-tight truncate max-w-full">
+                            {opt.shortLabel}
+                          </span>
+                          <span className="text-[10px] font-bold opacity-80 tabular-nums">
+                            {opt.percentLabel}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                {selectedDrinkType !== 'water' && (
-                  <div className="mt-1 text-xs font-extrabold text-[#777777] dark:text-slate-300 tabular-nums">
-                    {selectedDrinkOption.label} →{' '}
-                    <span className="text-[#1CB0F6]">
-                      {calculateEffectiveMl(customMl, selectedDrinkType)} ml efektif
+
+                <div className="rounded-[20px] bg-[#F7FAFC] dark:bg-slate-800 p-4 text-center mb-4">
+                  <div className="flex items-center justify-center gap-1.5">
+                    <input
+                      ref={manualMlInputRef}
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={2000}
+                      step={1}
+                      value={customMlInput}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (raw === '') {
+                          setCustomMlInput('');
+                          return;
+                        }
+                        const digits = raw.replace(/[^0-9]/g, '');
+                        if (!digits) {
+                          setCustomMlInput('');
+                          return;
+                        }
+                        const parsed = parseInt(digits, 10);
+                        const clamped = Math.max(1, Math.min(2000, parsed));
+                        setCustomMl(clamped);
+                        setCustomMlInput(String(clamped));
+                      }}
+                      onBlur={() => {
+                        setCustomMl(safeCustomMl);
+                        setCustomMlInput(String(safeCustomMl));
+                      }}
+                      aria-label="Masukkan jumlah mililiter manual"
+                      className="w-28 rounded-xl border-2 border-[#D6ECFA] dark:border-slate-600 bg-white dark:bg-slate-900 px-2 py-0.5 text-center font-display text-4xl font-extrabold text-[#1CB0F6] dark:text-[#4CC5FF] tabular-nums focus:border-[#1CB0F6] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                    <span className="font-display text-2xl font-extrabold text-[#1CB0F6] dark:text-[#4CC5FF]">
+                      ml
                     </span>
                   </div>
-                )}
-                <input
-                  type="range"
-                  min={50}
-                  max={1000}
-                  step={25}
-                  value={customMl}
-                  onChange={(e) => setCustomMl(Number(e.target.value))}
-                  aria-label="Geser jumlah mililiter"
-                  className="mt-4 w-full accent-[#1CB0F6] cursor-pointer h-3"
-                />
-                <div className="mt-1 flex justify-between text-xs font-bold text-[#777777] dark:text-slate-400 tabular-nums">
-                  <span>50 ml</span>
-                  <span>500 ml</span>
-                  <span>1.000 ml</span>
-                </div>
-              </div>
 
-              <Button3D
-                variant="water"
-                fullWidth
-                size="lg"
-                silent
-                onClick={() => {
-                  setShowCustomSheet(false);
-                  handleDrink(customMl, selectedDrinkType);
-                }}
-              >
-                Catat +{customMl} ml
-                {selectedDrinkType !== 'water'
-                  ? ` (${calculateEffectiveMl(customMl, selectedDrinkType)} ml efektif)`
-                  : ''}
-              </Button3D>
-            </motion.div>
-          </div>
-        )}
+                  <div className="mt-2 flex items-center justify-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundEngine.play('click', data.settings.sound);
+                        manualMlInputRef.current?.focus();
+                        manualMlInputRef.current?.select();
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-[#CBEBFF] dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-1 text-[11px] font-extrabold text-[#0284C7] dark:text-[#7CE0FF] hover:bg-[#EEF8FF] dark:hover:bg-slate-700 active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Pencil className="w-3 h-3" />
+                      Ketik Manual (1–2.000 ml)
+                    </button>
+                  </div>
+
+                  {modalDrinkType !== 'water' && (
+                    <div className="mt-2 text-xs font-extrabold text-[#777777] dark:text-slate-300 tabular-nums">
+                      {modalOpt.label} →{' '}
+                      <span className="text-[#1CB0F6] dark:text-[#4CC5FF]">
+                        {modalEffectiveMl} ml efektif
+                      </span>
+                    </div>
+                  )}
+
+                  <input
+                    type="range"
+                    min={50}
+                    max={1000}
+                    step={25}
+                    value={sliderValue}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setCustomMl(val);
+                      setCustomMlInput(String(val));
+                    }}
+                    aria-label="Geser jumlah mililiter"
+                    className="mt-3 w-full accent-[#1CB0F6] cursor-pointer h-3"
+                  />
+                  <div className="mt-1 flex justify-between text-xs font-bold text-[#777777] dark:text-slate-400 tabular-nums">
+                    <span>50 ml</span>
+                    <span>500 ml</span>
+                    <span>1.000 ml</span>
+                  </div>
+                </div>
+
+                <Button3D
+                  variant="water"
+                  fullWidth
+                  size="lg"
+                  silent
+                  onClick={() => {
+                    setShowCustomSheet(false);
+                    handleDrink(safeCustomMl, modalDrinkType);
+                  }}
+                >
+                  Catat +{safeCustomMl} ml
+                  {modalDrinkType !== 'water'
+                    ? ` (${modalEffectiveMl} ml efektif)`
+                    : ''}
+                </Button3D>
+              </motion.div>
+            </div>
+          );
+        })()}
       </AnimatePresence>
 
       {/* Modal Peringatan Pacing / Terlalu Banyak Minum dalam Waktu Dekat (Fase 6) */}
