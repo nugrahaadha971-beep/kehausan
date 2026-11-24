@@ -1,0 +1,40 @@
+:root {
+  --water-500: #1CB0F6;
+  --water-600: #1899D6;
+  --water-100: #DDF4FF;
+  --mint-500: #58CC02;
+  --mint-600: #46A302;
+  --mint-100: #D7FFB8;
+  --sun-500: #FFC800;
+  --sun-600: #E5A400;
+  --flame-500: #FF9600;
+  --flame-600: #DB7D00;
+  --berry-500: #CE82FF;
+  --berry-600: #A558D9;
+  --coral-500: #FF4B4B;
+  --coral-600: #D93535;
+  --ink-900: #3C3C3C;
+  --ink-600: #777777;
+  --snow: #FFFFFF;
+  --surface-soft: #F7FAFC;
+  --border-soft: #E5E5E5;
+  --night-900: #1B0B4E;
+  --night-700: #4B5CF2;
+
+  --radius-card: 20px;
+  --radius-button: 16px;
+  --radius-chip: 999px;
+
+  --font-display: 'Baloo 2', 'Nunito', system-ui, sans-serif;
+  --font-body: 'Nunito', system-ui, -apple-system, sans-serif;
+}
+
+.dark {
+  --ink-900: #F1F5F9;
+  --ink-600: #94A3B8;
+  --snow: #0F172A;
+  --surface-soft: #1E293B;
+  --border-soft: #334155;
+  --water-100: #0C2D48;
+  --mint-100: #133A1B;
+}

@@ -1,0 +1,81 @@
+@import "tailwindcss";
+@import "./styles/tokens.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  html {
+    font-family: var(--font-body);
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: #EEF6FB;
+    color: var(--ink-900);
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+  }
+
+  .dark body {
+    background-color: #090F1C;
+    color: #F1F5F9;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+    text-wrap: balance;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes progress-shine {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.animate-shine {
+  animation: progress-shine 2.4s ease-in-out infinite;
+}
+
+@keyframes sunburst-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-sunburst {
+  animation: sunburst-spin 22s linear infinite;
+}
+
+@keyframes flame-flicker {
+  0%, 100% {
+    transform: scale(1) rotate(-1deg);
+  }
+  50% {
+    transform: scale(1.06) rotate(2deg);
+  }
+}
+
+.animate-flame {
+  animation: flame-flicker 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-shine,
+  .animate-sunburst,
+  .animate-flame {
+    animation: none !important;
+  }
+}
