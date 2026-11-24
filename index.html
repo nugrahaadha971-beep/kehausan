@@ -23,6 +23,18 @@
       href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@400;600;700;800&display=swap"
       rel="stylesheet"
     />
+    <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+    <script>
+      window.OneSignalDeferred = window.OneSignalDeferred || [];
+      OneSignalDeferred.push(async function(OneSignal) {
+        await OneSignal.init({
+          appId: "41757923-5c9a-45fe-8aa5-2c6a32f82eb0",
+          safari_web_id: "web.onesignal.auto.064b44a8-1dd7-4e10-9d87-452ef5b9c9dd",
+          serviceWorkerParam: { scope: "/kehausan/" },
+          serviceWorkerPath: "kehausan/OneSignalSDKWorker.js"
+        });
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>

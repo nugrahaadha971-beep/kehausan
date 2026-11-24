@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import {
   Bell,
@@ -46,22 +46,60 @@ export const Profile: React.FC = () => {
 
   const [resetStep, setResetStep] = useState<0 | 1 | 2>(0);
   const [notifFeedback, setNotifFeedback] = useState<string | null>(null);
+  const [isNotifBusy, setIsNotifBusy] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let removeListener: (() => void) | undefined;
+
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push((OneSignal) => {
+      if (!active) return;
+
+      const subscription = OneSignal.User?.PushSubscription;
+      if (subscription && typeof subscription.optedIn === 'boolean') {
+        updateSettings({ notifications: subscription.optedIn });
+      }
+
+      const handleSubscriptionChange = (event: { current?: { optedIn?: boolean } }) => {
+        if (!active) return;
+        const nextOptedIn = Boolean(
+          event?.current?.optedIn ?? OneSignal.User?.PushSubscription?.optedIn
+        );
+        updateSettings({ notifications: nextOptedIn });
+      };
+
+      subscription?.addEventListener?.('change', handleSubscriptionChange);
+      removeListener = () => {
+        subscription?.removeEventListener?.('change', handleSubscriptionChange);
+      };
+    });
+
+    return () => {
+      active = false;
+      removeListener?.();
+    };
+  }, [updateSettings]);
 
   const handleToggleNotifications = async () => {
+    if (isNotifBusy) return;
+
     if (data.settings.notifications) {
       updateSettings({ notifications: false });
       setNotifFeedback(null);
+      window.OneSignalDeferred = window.OneSignalDeferred || [];
+      window.OneSignalDeferred.push(async (OneSignal) => {
+        try {
+          await OneSignal.User?.PushSubscription?.optOut?.();
+        } catch {
+          // Abaikan jika SDK gagal optOut
+        }
+      });
       return;
     }
 
     if (typeof Notification === 'undefined') {
       setNotifFeedback('Browser ini tidak mendukung Notification API.');
-      return;
-    }
-
-    if (Notification.permission === 'granted') {
-      updateSettings({ notifications: true });
-      setNotifFeedback('Pengingat browser aktif saat tab terbuka.');
       return;
     }
 
@@ -72,17 +110,55 @@ export const Profile: React.FC = () => {
       return;
     }
 
-    try {
-      const perm = await Notification.requestPermission();
-      if (perm === 'granted') {
-        updateSettings({ notifications: true });
-        setNotifFeedback('Pengingat browser berhasil diaktifkan!');
-      } else {
-        setNotifFeedback('Izin notifikasi belum diberikan.');
+    setIsNotifBusy(true);
+    setNotifFeedback(null);
+
+    let settled = false;
+    const timeoutId = window.setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        setIsNotifBusy(false);
+        setNotifFeedback(
+          'Layanan push notification belum merespons. Periksa koneksi internet atau pemblokir iklan.'
+        );
       }
-    } catch {
-      setNotifFeedback('Gagal meminta izin notifikasi.');
-    }
+    }, 6000);
+
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push(async (OneSignal) => {
+      try {
+        await OneSignal.Notifications.requestPermission();
+        let optedIn = Boolean(OneSignal.User?.PushSubscription?.optedIn);
+        if (!optedIn && OneSignal.Notifications.permission) {
+          await OneSignal.User?.PushSubscription?.optIn?.();
+          optedIn = Boolean(OneSignal.User?.PushSubscription?.optedIn);
+        }
+
+        if (!settled) {
+          settled = true;
+          window.clearTimeout(timeoutId);
+        }
+
+        updateSettings({ notifications: optedIn });
+        if (optedIn) {
+          setNotifFeedback('Pengingat Push Notification berhasil diaktifkan!');
+        } else if (Notification.permission === 'denied') {
+          setNotifFeedback(
+            'Izin notifikasi diblokir di pengaturan browser. Aktifkan izin di ikon gembok/alamat URL.'
+          );
+        } else {
+          setNotifFeedback('Izin notifikasi belum diberikan.');
+        }
+      } catch {
+        if (!settled) {
+          settled = true;
+          window.clearTimeout(timeoutId);
+        }
+        setNotifFeedback('Gagal meminta izin notifikasi.');
+      } finally {
+        setIsNotifBusy(false);
+      }
+    });
   };
 
   return (
@@ -380,8 +456,9 @@ export const Profile: React.FC = () => {
               role="switch"
               aria-checked={data.settings.notifications}
               aria-label="Aktifkan notifikasi browser"
+              disabled={isNotifBusy}
               onClick={handleToggleNotifications}
-              className={`min-h-[32px] w-14 rounded-full p-1 transition-colors cursor-pointer ${
+              className={`min-h-[32px] w-14 rounded-full p-1 transition-colors cursor-pointer disabled:opacity-60 ${
                 data.settings.notifications
                   ? 'bg-[#58CC02]'
                   : 'bg-[#E5E5E5] dark:bg-slate-700'
@@ -395,7 +472,7 @@ export const Profile: React.FC = () => {
             </button>
           </div>
           <p className="mt-2 text-[11px] font-semibold leading-relaxed text-[#777777] dark:text-slate-400">
-            Catatan: Karena Tetes berjalan 100% di browser tanpa server, notifikasi hanya muncul saat aplikasi atau tab sedang terbuka (atau terpasang sebagai PWA).
+            Aktifkan untuk menerima pengingat minum otomatis lewat Push Notification meskipun aplikasi ditutup.
           </p>
           {notifFeedback && (
             <p className="mt-1.5 text-xs font-extrabold text-[#1CB0F6]">
